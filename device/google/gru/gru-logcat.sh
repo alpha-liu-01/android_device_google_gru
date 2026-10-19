@@ -1,6 +1,9 @@
 #!/system/bin/sh
 # Filtered log of the system_server death. One copy stays on userdata.
 # The other is one kmsg line at a time so gru-keep can store it.
+while IFS= read -r sline; do
+    printf 'GRU_SWAP %s\n' "$sline" > /dev/kmsg || true
+done < /proc/swaps
 logcat -b crash -b system -b main -f /data/gru-logcat.txt -r 2048 -n 2 \
     Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:E '*:S' &
 logcat -b crash -b system -b main \

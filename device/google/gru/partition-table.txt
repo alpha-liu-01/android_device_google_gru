@@ -1,0 +1,16 @@
+# Scarlet SD, /dev/mmcblk0, 122167296 sectors of 512 bytes.
+# KernelA and KernelB stay where they are. Everything after them is replaced.
+# Do not write this table until it has been confirmed.
+#
+# name       start       size        bytes           type
+# KernelA    8192        65536       33554432        kernel, priority 10, unchanged
+# KernelB    73728       65536       33554432        kernel, priority 0, unchanged
+# bootlog    139264      131072      67108864        ext4, label bootlog
+# metadata   270336      131072      67108864        ext4
+# misc       401408      16384       8388608         raw
+# super      417792      16777216    8589934592      super, 8 GiB
+# userdata   17195008    104970240   53744762880     f2fs
+#
+# userdata ends at sector 122165248. The backup GPT starts at 122167263.
+# BOARD_SUPER_PARTITION_SIZE is 8589934592.
+# BOARD_GRU_DYNAMIC_PARTITIONS_SIZE is 8585740288.

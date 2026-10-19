@@ -1,0 +1,24 @@
+<manifest version="1.0" type="device" target-level="202604">
+    <!-- This file must exist so VINTF loads APEX fragments.
+         KeyMint and Gatekeeper are software HALs from their APEXes.
+         hwservicemanager treats HIDL as unsupported unless these two
+         are declared, and the USB HAL then exits. -->
+    <hal format="hidl">
+        <name>android.hidl.manager</name>
+        <transport>hwbinder</transport>
+        <version>1.2</version>
+        <interface>
+            <name>IServiceManager</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+    <hal format="hidl">
+        <name>android.hidl.token</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>ITokenManager</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
+</manifest>

@@ -1,0 +1,68 @@
+import /vendor/etc/init/hw/init.mainline.rc
+
+# init imports this path. Without mount_all, nothing queues nonencrypted,
+# so class main never starts. Default mode (not --early) queues that trigger.
+# first_stage entries are already mounted and skipped; the return is
+# DEV_NOT_ENCRYPTABLE, which matches this unencrypted userdata.
+
+on early-init
+    # Battery stats swaps BPF maps through a PF_KEY socket. That close()
+    # calls synchronize_rcu(). CONFIG_NET_KEY=m, so the family is missing
+    # until this module is loaded, and the swap then kills system_server.
+    insmod /vendor/lib/af_key.ko
+    write /sys/module/firmware_class/parameters/path /vendor/firmware
+    # usbdrd_dwc3_0 is dr_mode=host, so there is no UDC. The gadget HAL
+    # aborts when sys.usb.controller is empty. init.mainline.usb.rc would
+    # otherwise set configfs to 2 and restart that HAL forever.
+    setprop vendor.usb.configfs 0
+    # No /dev/ashmem on this kernel. libcutils creates a memfd instead when
+    # this is set before zygote starts.
+    setprop sys.use_memfd true
+    # bootanim holds several cores on SwiftShader and SystemUI then misses
+    # its startup deadline. The animation is not what this panel shows.
+    setprop debug.sf.nobootanimation 1
+
+on fs
+    mount_all /vendor/etc/fstab.${ro.hardware}
+
+# system_suspend opens /sys/power/state as uid system, before early_hal.
+# A failed open keeps the service up for wake locks, and it never writes "mem".
+# Deep suspend on this 6.6 kernel freezes userspace and falls back to the
+# bootloader. The volume keys do not work after that.
+# fbcon is bound to the DSI panel by this point. hwcomposer starts later, in
+# class hal. If the framebuffer console still holds the primary plane, the
+# composer finds no pipeline and stays headless, and the panel keeps the
+# last console frame. Unbind here, before that class starts.
+on post-fs
+    chmod 000 /sys/power/state
+    write /sys/class/vtconsole/vtcon0/bind 0
+    write /sys/class/vtconsole/vtcon1/bind 0
+
+# Console loglevel 7 would paint kernel warnings back onto the panel if
+# fbcon is still bound. kmsg itself is unchanged.
+on property:sys.boot_completed=1
+    exec_background - root root -- /system/bin/settings put system screen_off_timeout 86400000
+    write /proc/sys/kernel/printk "3 4 1 3"
+
+# usbd only talks to IUsbGadget. With configfs left at 0 that service is
+# never registered, and usbd retries it on every boot.
+on property:init.svc.usbd=running
+    stop usbd
+
+# usbdrd_dwc3_0 is host-only, so there is no UDC. adbd still opens functionfs
+# and the kernel prints bcdVersion about once a second.
+on property:init.svc.adbd=running
+    stop adbd
+
+# No Bluetooth controller. The HAL aborts in initializationComplete and on
+# FD_SET(-1), and init keeps restarting it.
+on property:init.svc.vendor.bluetooth-default=running
+    stop vendor.bluetooth-default
+
+# system_server's Java exception never reaches kmsg by itself. The script
+# keeps a copy on /data and mirrors the same lines to kmsg one at a time.
+service gru_logcat /system/bin/sh /vendor/bin/gru-logcat.sh
+    class core
+    user root
+    group root system log readproc
+    seclabel u:r:init:s0

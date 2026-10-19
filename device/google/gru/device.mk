@@ -14,7 +14,9 @@ AB_OTA_UPDATER := false
 # No controller. Advertising android.hardware.bluetooth makes SystemServer
 # construct BluetoothService, which aborts when com.android.bluetooth is disabled.
 TARGET_BLUETOOTH_HAL := none
-TARGET_GRAPHICS := swiftshader
+TARGET_GRAPHICS := mesa
+TARGET_GRAPHICS_VULKAN := none
+TARGET_GRAPHICS_ALLOCATOR_HAL := minigbm-upstream
 TARGET_MINIGBM_PLATFORM := generic
 # external/drm_hwcomposer-upstream has no Android.bp in this tree.
 # The AIDL HWC3 APEX is external/drm_hwcomposer.
@@ -39,7 +41,13 @@ PRODUCT_PRODUCT_PROPERTIES += \
     persist.sys.usb.config=adb
 
 PRODUCT_VENDOR_PROPERTIES += \
-    persist.sys.zram_enabled=1
+    persist.sys.zram_enabled=1 \
+    ro.opengles.version=196609 \
+    vendor.hwc.drm.device=/dev/dri/card0 \
+    vendor.minigbm.device=/dev/dri/card0 \
+    debug.renderengine.backend=skiaglthreaded \
+    debug.hwui.renderer=skiagl \
+    ro.surface_flinger.supports_background_blur=0
 
 PRODUCT_PACKAGES += hwservicemanager
 
@@ -60,7 +68,10 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/gru-logcat.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gru-logcat.sh \
     $(LOCAL_PATH)/firmware/rockchip/dptx.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/rockchip/dptx.bin \
     $(LOCAL_PATH)/modules/af_key.ko:$(TARGET_COPY_OUT_VENDOR)/lib/af_key.ko \
+    $(LOCAL_PATH)/modules/drm_shmem_helper.ko:$(TARGET_COPY_OUT_VENDOR)/lib/drm_shmem_helper.ko \
+    $(LOCAL_PATH)/modules/gpu-sched.ko:$(TARGET_COPY_OUT_VENDOR)/lib/gpu-sched.ko \
     $(LOCAL_PATH)/modules/lz4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/lz4.ko \
+    $(LOCAL_PATH)/modules/panfrost.ko:$(TARGET_COPY_OUT_VENDOR)/lib/panfrost.ko \
     $(LOCAL_PATH)/modules/zram.ko:$(TARGET_COPY_OUT_VENDOR)/lib/zram.ko
 
 include $(LOCAL_PATH)/modules.mk

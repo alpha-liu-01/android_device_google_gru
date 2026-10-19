@@ -5,9 +5,9 @@ while IFS= read -r sline; do
     printf 'GRU_SWAP %s\n' "$sline" > /dev/kmsg || true
 done < /proc/swaps
 logcat -b crash -b system -b main -f /data/gru-logcat.txt -r 2048 -n 2 \
-    Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:E '*:S' &
+    Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:I RenderEngine:I libEGL:I minigbm:I '*:S' &
 logcat -b crash -b system -b main \
-    Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:E '*:S' |
+    Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:I RenderEngine:I libEGL:I minigbm:I '*:S' |
 while IFS= read -r line; do
     printf 'GRU_LOG %s\n' "$line" > /dev/kmsg || true
 done

@@ -13,11 +13,14 @@ MAINLINE_COMMON_PATH := device/mainline/common
 
 # Do not set TARGET_INITIAL_BRINGUP. That selects HIDL drmfb-composer.
 AB_OTA_UPDATER := false
-TARGET_GRAPHICS := swiftshader
+TARGET_GRAPHICS := mesa
+TARGET_GRAPHICS_VULKAN := none
+TARGET_GRAPHICS_ALLOCATOR_HAL := minigbm-upstream
 # minigbm-upstream has no rockchip soong platform. generic uses the dumb
 # rockchip backend. The DRV_ROCKCHIP ioctl backend needs a downstream GEM
 # ioctl this 6.6 kernel does not implement. msm pulls the Qualcomm backend.
 TARGET_MINIGBM_PLATFORM := generic
+BOARD_MESA3D_GALLIUM_DRIVERS := panfrost
 include $(MAINLINE_COMMON_PATH)/optional/options.mk
 SUPPORTS_INLINE_KERNEL_BUILDING := false
 

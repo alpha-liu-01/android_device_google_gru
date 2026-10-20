@@ -11,6 +11,8 @@
 LOCAL_PATH := device/google/gru
 
 AB_OTA_UPDATER := false
+TARGET_AUDIO_HAL := default-aidl
+TARGET_AUDIO_POLICY := custom
 TARGET_BLUETOOTH_HAL := default-aidl
 TARGET_GRAPHICS := mesa
 TARGET_GRAPHICS_VULKAN := none
@@ -110,6 +112,13 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.wifi.passpoint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.passpoint.xml \
     $(LOCAL_PATH)/wpa_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/wpa_supplicant_overlay.conf \
     $(LOCAL_PATH)/p2p_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/p2p_supplicant_overlay.conf \
+    $(LOCAL_PATH)/etc/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
+    frameworks/av/services/audiopolicy/config/audio_policy_volumes.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_volumes.xml \
+    frameworks/av/services/audiopolicy/config/bluetooth_audio_policy_configuration_7_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/bluetooth_audio_policy_configuration_7_0.xml \
+    frameworks/av/services/audiopolicy/config/bluetooth_with_le_audio_policy_configuration_7_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml \
+    frameworks/av/services/audiopolicy/config/default_volume_tables.xml:$(TARGET_COPY_OUT_VENDOR)/etc/default_volume_tables.xml \
+    frameworks/av/services/audiopolicy/config/r_submix_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/r_submix_audio_policy_configuration.xml \
+    frameworks/av/services/audiopolicy/config/usb_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/usb_audio_policy_configuration.xml \
     $(LOCAL_PATH)/etc/sensors/hals.conf:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/hals.conf \
     $(LOCAL_PATH)/etc/sensors/sensor_hal_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/sensor_hal_configuration.xml \
     $(LOCAL_PATH)/idc/Elan_Touchscreen.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Elan_Touchscreen.idc \
@@ -192,6 +201,22 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/rk3399_dmc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rk3399_dmc.ko \
     $(LOCAL_PATH)/modules/rockchip-dfi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-dfi.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \
+    $(LOCAL_PATH)/modules/snd-pcm-dmaengine.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-pcm-dmaengine.ko \
+    $(LOCAL_PATH)/modules/snd-pcm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-pcm.ko \
+    $(LOCAL_PATH)/modules/snd-soc-core.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-core.ko \
+    $(LOCAL_PATH)/modules/snd-soc-da7219.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-da7219.ko \
+    $(LOCAL_PATH)/modules/snd-soc-dmic.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-dmic.ko \
+    $(LOCAL_PATH)/modules/snd-soc-hdmi-codec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-hdmi-codec.ko \
+    $(LOCAL_PATH)/modules/snd-soc-max98357a.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-max98357a.ko \
+    $(LOCAL_PATH)/modules/snd-soc-rk3399-gru-sound.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-rk3399-gru-sound.ko \
+    $(LOCAL_PATH)/modules/snd-soc-rl6231.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-rl6231.ko \
+    $(LOCAL_PATH)/modules/snd-soc-rockchip-i2s.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-rockchip-i2s.ko \
+    $(LOCAL_PATH)/modules/snd-soc-rockchip-spdif.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-rockchip-spdif.ko \
+    $(LOCAL_PATH)/modules/snd-soc-rt5514-spi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-rt5514-spi.ko \
+    $(LOCAL_PATH)/modules/snd-soc-rt5514.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-rt5514.ko \
+    $(LOCAL_PATH)/modules/snd-timer.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-timer.ko \
+    $(LOCAL_PATH)/modules/snd.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd.ko \
+    $(LOCAL_PATH)/modules/soundcore.ko:$(TARGET_COPY_OUT_VENDOR)/lib/soundcore.ko \
     $(LOCAL_PATH)/modules/uhid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uhid.ko \
     $(LOCAL_PATH)/modules/zram.ko:$(TARGET_COPY_OUT_VENDOR)/lib/zram.ko
 

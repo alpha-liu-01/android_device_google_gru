@@ -55,6 +55,22 @@ on early-init
     insmod /vendor/lib/btmtk.ko
     insmod /vendor/lib/btqca.ko
     insmod /vendor/lib/btusb.ko
+    insmod /vendor/lib/soundcore.ko
+    insmod /vendor/lib/snd.ko
+    insmod /vendor/lib/snd-timer.ko
+    insmod /vendor/lib/snd-pcm.ko
+    insmod /vendor/lib/snd-pcm-dmaengine.ko
+    insmod /vendor/lib/snd-soc-core.ko
+    insmod /vendor/lib/snd-soc-rockchip-i2s.ko
+    insmod /vendor/lib/snd-soc-rockchip-spdif.ko
+    insmod /vendor/lib/snd-soc-max98357a.ko
+    insmod /vendor/lib/snd-soc-da7219.ko
+    insmod /vendor/lib/snd-soc-rl6231.ko
+    insmod /vendor/lib/snd-soc-rt5514-spi.ko
+    insmod /vendor/lib/snd-soc-rt5514.ko
+    insmod /vendor/lib/snd-soc-dmic.ko
+    insmod /vendor/lib/snd-soc-hdmi-codec.ko
+    insmod /vendor/lib/snd-soc-rk3399-gru-sound.ko
     # usbdrd_dwc3_0 is dr_mode=host, so there is no UDC. The gadget HAL
     # aborts when sys.usb.controller is empty. init.mainline.usb.rc would
     # otherwise set configfs to 2 and restart that HAL forever.
@@ -142,14 +158,6 @@ on post-fs
     chmod 0660 /sys/bus/iio/devices/iio:device1/scan_elements/in_timestamp_en
 
 on zygote-start
-    # Phase 3 ran `pm disable com.android.bluetooth`, which persisted
-    # COMPONENT_ENABLED_STATE_DISABLED into user 0's package-restrictions.xml.
-    # BluetoothComponent.<init> runs inside SystemServer.startOtherServices()
-    # before sys.boot_completed=1 and throws IllegalStateException if
-    # com.android.bluetooth is disabled, causing a system_server crash loop.
-    rm /data/system/users/0/package-restrictions.xml
-    rm /data/system/users/0/package-restrictions-backup.xml
-    rm /data/system/users/0/package-restrictions.xml.reservecopy
     mkdir /data/vendor/wifi 0770 wifi wifi
     mkdir /data/vendor/wifi/wpa 0770 wifi wifi
     mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi

@@ -202,6 +202,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/rk3399_dmc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rk3399_dmc.ko \
     $(LOCAL_PATH)/modules/rockchip-dfi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-dfi.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \
+    $(LOCAL_PATH)/modules/rtc-cros-ec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rtc-cros-ec.ko \
     $(LOCAL_PATH)/modules/snd-pcm-dmaengine.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-pcm-dmaengine.ko \
     $(LOCAL_PATH)/modules/snd-pcm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-pcm.ko \
     $(LOCAL_PATH)/modules/snd-soc-core.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-core.ko \

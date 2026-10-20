@@ -25,6 +25,7 @@ on early-init
     insmod /vendor/lib/cros_ec_sensors_core.ko
     insmod /vendor/lib/cros_ec_sensors.ko
     insmod /vendor/lib/cros_usbpd-charger.ko
+    insmod /vendor/lib/rtc-cros-ec.ko
     insmod /vendor/lib/lz4.ko
     insmod /vendor/lib/zram.ko
     insmod /vendor/lib/drm_shmem_helper.ko
@@ -96,16 +97,11 @@ on fs
     mount_all /vendor/etc/fstab.${ro.hardware}
     swapon_all /vendor/etc/fstab.${ro.hardware}
 
-# system_suspend opens /sys/power/state as uid system, before early_hal.
-# A failed open keeps the service up for wake locks, and it never writes "mem".
-# Deep suspend on this 6.6 kernel freezes userspace and falls back to the
-# bootloader. The volume keys do not work after that.
 # fbcon is bound to the DSI panel by this point. hwcomposer starts later, in
 # class hal. If the framebuffer console still holds the primary plane, the
 # composer finds no pipeline and stays headless, and the panel keeps the
 # last console frame. Unbind here, before that class starts.
 on post-fs
-    chmod 000 /sys/power/state
     write /sys/class/vtconsole/vtcon0/bind 0
     write /sys/class/vtconsole/vtcon1/bind 0
     chown bluetooth bluetooth /dev/rfkill

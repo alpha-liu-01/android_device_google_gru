@@ -284,6 +284,48 @@
 - **构建产物**：
   - `out/target/product/gru/super.img` 大小 `1253716372` 字节，sha256 `5310e948452e703eeac8437dbbf453a75150606c99d686777aa836a5723f6961`。
 
+### 9. 睡眠与唤醒（`dw_wdt` 内核 `[watchdogd]` 托管移交、`rtc-cros-ec.ko` 与 S3 `deep` 唤醒）（2026-10-20，已实机验证并固化）
+
+- **为什么此前 `6.6.34-phase2` 一进入 S3 `deep` 睡眠就会在 30 秒内掉回 depthcharge 启动界面**：
+  1. **硬件约束**：RK3399 的 `dw_wdt`（Synopsys DesignWare Watchdog）硬件最大心跳周期 `max_hw_heartbeat_ms = 21474` ms（21.474 秒），且设备树中无独立复位线（`!dw_wdt->rst`），一旦启动就无法从硬件寄存器关闭。
+  2. **旧 `gru-keep` 用户态喂狗在 `Freezing user space processes` 时的必死机理**：
+     - 此前 `gru-keep.c` 打开 `/dev/watchdog`（使内核设置 `WDOG_ACTIVE = 1`），设置 `timeout = 30`，并 `fork` 一个用户态子进程持续保持 `/dev/watchdog` 打开、每 200 ms 调用 `WDIOC_KEEPALIVE`。
+     - 根据 `drivers/watchdog/watchdog_dev.c`：只要 `WDOG_ACTIVE == 1`，内核 `watchdog_next_keepalive()` 计算出的内核代喂截止时间就是 `virt_timeout = last_keepalive + 30s`。当系统进入 S3 `deep` 休眠冻结用户态进程（`Freezing user space processes`）时，用户态 `gru-keep` 子进程被冻结停止喂狗；`30s - 21.474s = 8.53s` 后，超过 `virt_timeout`，内核不再代喂硬件看门狗；再过 `21.474s`（即休眠后整 **30.0 秒**），硬件看门狗超时拉低 SoC 复位，整机掉回 bootloader。
+     - 即使直接 `kill -9` 杀掉 `gru-keep` 子进程，由于未写入魔术字符 `'V'`，`watchdog_release()` 会打印 ` watchdog0: watchdog did not stop!` 且不调用 `watchdog_stop()`，`WDOG_ACTIVE` 依然为 `1`，机器照样在 30.0 秒后硬复位。
+  3. **内核 `[watchdogd]` 永久托管移交方案（`write("V")` + `WDIOS_DISABLECARD` + `close()`）**：
+     - 当打开 `/dev/watchdog` 后，执行 `ioctl(fd, WDIOC_SETOPTIONS, &WDIOS_DISABLECARD)`、写入魔术字符 `write(fd, "V", 1)` 并 `close(fd)`：
+       - `watchdog_release()` 识别到 `_WDOG_ALLOW_RELEASE`，正式调用 `watchdog_stop(wdd)`。
+       - `dw_wdt_stop(wdd)` 检测到 `!dw_wdt->rst`，置位 `WDOG_HW_RUNNING = 1` 并返回 `0`。
+       - `watchdog_stop(wdd)` 清除 `WDOG_ACTIVE = 0` 并调用 `watchdog_update_worker(wdd)`。
+       - 此时 `!watchdog_active(wdd) && watchdog_hw_running(wdd)` 为真，且 `wd_data->open_deadline == KTIME_MAX`（由 `watchdog_open()` 设为无穷大），因此 `watchdog_need_worker()` 恒为 **`true`**，`virt_timeout` 恒为 **`KTIME_MAX`（永不过期）**！
+       - 内核内置的不可冻结实时线程 `[watchdogd]`（`SCHED_FIFO`、`HRTIMER_MODE_REL_HARD`）随即接管，在内核态每 **`10.737` 秒**（`max_hw_heartbeat_ms / 2`）自动喂一次 `dw_wdt`，无论正常运行时还是 S3 `deep` 休眠冻结用户空间期间均不中断；在挂起进入 ATF `rockchip_soc_suspend` 期间，CPU 切至 32.768 kHz 慢时钟，`dw_wdt` 时钟同步门控暂停，唤醒瞬间恢复。
+- **补齐 ChromeOS EC RTC 模块（`rtc-cros-ec.ko`）与解封 `/sys/power/state`**：
+  - `6.6.34-phase2` 中 `CONFIG_RTC_DRV_CROS_EC=m`（`drivers/rtc/rtc-cros-ec.ko`，零外部依赖）。从 `modinstall` 提取 `rtc-cros-ec.ko` 放入 `device/google/gru/modules/`，在 `device.mk` 安装至 `/vendor/lib/rtc-cros-ec.ko`，并在 `init.gru.rc` 的 `on early-init` 加载，注册 `/dev/rtc0`（`cros-ec-rtc.2.auto`）与内核 `alarmtimer`，供 `SystemSuspend` 与 `AlarmManager` 在休眠期间设置定时唤醒。
+  - 移除 `init.gru.rc` `on post-fs` 中阶段 3 的临时封锁 `chmod 000 /sys/power/state`，保留 `init` 默认设置的 `0660 system:system` 权限，使 `android.system.suspend-service` 正常读写 `/sys/power/state` 与 `/sys/power/wakeup_count`。
+- **实机长时 S3 `deep` 休眠与物理电源键唤醒验证（`10.0.0.119:5555`）**：
+  - 实机拔掉外部保活连接、进入真实长时 S3 `deep` 睡眠后，按机身物理电源键一次点亮唤醒成功：`boot_id` 保持 `66e5ea3e-118f-4346-965f-538890364924` 不变（同一次启动，未掉回 bootloader），`/sys/power/suspend_stats/success` 增至 `9`（`fail: 0`）。
+- **为什么刚才测试唤醒后 Wi-Fi 曾出现数分钟「已连接但带感叹号 / 正在连接 / 无法访问互联网（`ENONET`）」的根因与修复验证**：
+  - **日志直接证据（`dumpsys netd` 与 `logcat`）**：
+    - `logcat` 中 `NetworkMonitor/104` 报错：`PROBE_DNS connectivitycheck.gstatic.com 4ms FAIL in type ADDRCONFIG android.net.DnsResolver$DnsException: android.system.ErrnoException: resNetworkQuery failed: ENONET (Machine is not on the network)`。
+    - `dumpsys netd` 的 `NetworkController` 日志显示：
+      ```text
+      10-20 03:26:24.539 networkCreate(netId: 102, PHYSICAL)
+      10-20 03:26:24.549 networkAddInterface(102, wlan0) <6.51ms>
+      ...
+      10-20 03:39:41.111 networkCreate(netId: 104, PHYSICAL)
+      10-20 03:39:41.202 networkAddInterface(104, wlan0) -> ServiceSpecificException(16, "Device or resource busy")
+      ```
+  - **为什么会出现 `ServiceSpecificException(16, "Device or resource busy")`**：
+    - 在测试休眠前，为了在**不重启平板**的情况下让修改后的 `/sys/power/state` 权限被 `system_server` 重新打开，我们手动执行了热重启命令 `stop zygote; start zygote`（但**没有**同时重启守护进程 `netd`）。
+    - 旧的 `system_server` 在被 `stop zygote` 强制杀掉前，已经在 `netd` 中创建了 `netId: 102` 并把网卡 `wlan0` 绑定到了 `netId 102`（路由规则 `fwmark 0x10066 lookup wlan0`）。由于旧 `system_server` 是被直接杀死的，它没来得及调用 `netd` 的 `networkDestroy(102)`。
+    - 新启动的 `system_server` 从头分配了新的网络号（最终为 `netId: 104`），并调用 `netd.networkAddInterface(104, "wlan0")`；但常驻未重启的 `netd` 认为 `wlan0` 仍然归旧的孤儿网络 `102` 所有，于是拒绝绑定并返回 `EBUSY (16, "Device or resource busy")`！
+    - 结果导致新 `system_server` 的默认网络 `104` 名下没有任何网卡（`104 PHYSICAL` 后方为空，而 `102 PHYSICAL wlan0` 仍占着 `wlan0`），DNS 探测全部因找不到出口网卡立即返回 `ENONET`，UI 因此一边显示已连上 AP、一边在顶部状态栏显示感叹号并在前几分钟反复重连尝试（这与第 5 步首次在线热调试 Wi-Fi 时手动重启框架层而未重启整机是同一个原因；正常开机或正常睡眠唤醒绝对不会杀 `zygote`，因此不会发生 `netId` 孤儿占用）。
+  - **实机在线清理验证**：通过 `adb` 执行 `ndc network destroy 102` 释放孤儿 `netId 102` 并重连 Wi-Fi 后，`dumpsys netd` 立即显示 `Default network: 105` -> `105 PHYSICAL wlan0` 绑定成功，`cmd wifi status` 立即恢复 `Capabilities: ...&INTERNET&...&VALIDATED`，状态栏感叹号消失。
+- **代码与镜像固化**：
+  - `device/google/gru/gru-keep.c`：新增 `handoff_watchdog_to_kernel()`，在 `execv("/init.android")` 前执行 `WDIOC_SETOPTIONS(WDIOS_DISABLECARD)` + `write("V")` + `close(watchdog)` 将 `dw_wdt` 移交内核 `[watchdogd]` 实时线程，重新静态编译 `device/google/gru/prebuilt/gru-keep` 并通过 `wrap-ramdisk.sh` 生成 `/tmp/gru-ramdisk/ramdisk-wrapped.cpio`（`6971904` 字节）。
+  - `device/google/gru/device.mk` 与 `device/google/gru/init.gru.rc`：打包并在 `early-init` 加载 `/vendor/lib/rtc-cros-ec.ko`，移除 `on post-fs` 的 `chmod 000 /sys/power/state`。
+  - 重新打包生成 `out/target/product/gru/super.img`（大小 `1253544340` 字节，sha256 `7fa1d151bf2c0872c9e33181d4a5e184c85d81032f9b86d8cb17c460a9fe9e90`），并在内置盘 postmarketOS 上通过 `depthchargectl build` 生成新 `/home/user/phase3/kernel.kpart`（大小 `14159872` 字节，sha256 `823de9e15560fdfd89b23c4c511bf86a8e07790b97ef3d66876cd9734248b793`）。
+
 ## 事件
 
 | 日期 | 事件 |
@@ -299,3 +341,4 @@
 | 2026-10-20 | 完成阶段 4 第 6 项（蓝牙：QCA6174A USB `0cf3:e300` 固件、`btusb.ko` 等 13 个蓝牙/加密/UHID 模块、`android.hardware.bluetooth-service.default` AIDL HAL、`/dev/rfkill` 与 `/dev/uhid` 权限、清理遗留 `package-restrictions.xml`、`bluetooth.le.disable_apcf_extended_features=1`、全部蓝牙 Profile 属性及 `/dev/dma_heap/system` 节点）：实机验证「已连接的设备」与「提示音和振动」不闪退、手机双模配对与蓝牙鼠标连接完全可用，更新后的 `super.img`（`08b6e808e420e71bbb38ad6ff385359eed6a3a8b2d823f08a4a7a8c093a37c06`）已上传至设备 `/home/user/phase3/super.img`。 |
 | 2026-10-20 | 完成阶段 4 第 7 项（音频播放：打包 `rk3399-gru-sound` 及 `MAX98357A` / `DMIC` / `DA7219` / `rockchip-i2s` 等 16 个 ALSA SoC 内核模块并在 `early-init` 加载、编写 `device/google/gru/etc/audio_policy_configuration.xml` 绑定扬声器 `CARD_0_DEV_0` 与内置麦克风 `CARD_0_DEV_1`）及移除 `init.gru.rc` 中导致开机弹出 `LineageSetupWizard` 的一次性 `rm package-restrictions*.xml` 语句；实机先行动态加载验证外放铃声与麦克风采集正常，新 `super.img` 大小 `1253716372` 字节，校验和 `74e5fc1de1c6782c7e857dbbf94080582c9b1bc5a57bdb5b2ee61e9ee593cf05`。 |
 | 2026-10-20 | 完成阶段 4 第 8 项（电量与充电：定位并排除自定义测试脚本查询越界 `port=1` 导致 EC 复位的根因，打包并加载 `cros_usbpd-charger.ko` 注册 `CROS_USBPD_CHARGER0`，并在 `BatteryMonitor.cpp` 中完成 `current_avg` / `technology` `-5` 报错过滤与回退、USB-PD `usb_type` 映射 `AC powered: true`、`charge_now` 映射 `Charge counter` 与 `health` 状态修正）：实机在线验证 PD 5V/3A（15W）快充状态与电量增长稳定（88% -> 91%）、`dmesg` 零 `-5` 报错，合并第 7、8 项的新 `super.img` 大小 `1253716372` 字节，校验和 `5310e948452e703eeac8437dbbf453a75150606c99d686777aa836a5723f6961`。 |
+| 2026-10-20 | 完成阶段 4 第 9 项（睡眠与唤醒）：定位 `dw_wdt` 休眠 30 秒复位根因为 `gru-keep` 持有 `WDOG_ACTIVE=1` 导致用户空间冻结后 `virt_timeout` 到期，通过魔术字符 `'V'` + `WDIOS_DISABLECARD` + `close()` 将 `dw_wdt` 移交内核不可冻结实时线程 `[watchdogd]` 永久保活，并加载 `rtc-cros-ec.ko`、解封 `/sys/power/state`；实机拔除外部连接长时 S3 `deep` 休眠后按电源键成功唤醒（`boot_id` 不变，`suspend_stats/success=9`），同时定位并清理此前手动热重启 `zygote` 留下的 `netd` 孤儿 `netId 102` 占用 `wlan0` 导致的 Wi-Fi 感叹号（`EBUSY` / `ENONET`），恢复 `INTERNET & VALIDATED`，并固化至 `gru-keep.c`、`init.gru.rc`、`device.mk` 及新 `super.img`（`7fa1d151bf2c0872c9e33181d4a5e184c85d81032f9b86d8cb17c460a9fe9e90`）与 `ramdisk-wrapped.cpio`。 |

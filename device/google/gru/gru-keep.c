@@ -244,15 +244,12 @@ static void drain_kmsg(int kmsg) {
     }
 }
 
-static void keeper(int watchdog, int kmsg) {
+static void keeper(int kmsg) {
     struct sched_param param;
     param.sched_priority = 50;
     sched_setscheduler(0, SCHED_FIFO, &param);
     for (;;) {
         struct pollfd pollfd;
-        if (watchdog >= 0) {
-            ioctl(watchdog, WDIOC_KEEPALIVE, 0);
-        }
         if (kmsg < 0 || log_fd < 0) {
             sleep(1);
             continue;
@@ -264,6 +261,23 @@ static void keeper(int watchdog, int kmsg) {
             fsync(log_fd);
         }
     }
+}
+
+static void handoff_watchdog_to_kernel(int *watchdog) {
+    if (*watchdog < 0) {
+        return;
+    }
+    /* dw_wdt has no reset line on RK3399, so dw_wdt_stop() sets WDOG_HW_RUNNING
+       and returns 0. Writing magic 'V' before close() (and WDIOS_DISABLECARD)
+       makes watchdog_release() call watchdog_stop(), which clears WDOG_ACTIVE
+       while leaving WDOG_HW_RUNNING set and open_deadline = KTIME_MAX. The
+       kernel's non-freezable RT [watchdogd] kthread then feeds dw_wdt every
+       ~10.7s forever, including across userspace freeze during S3 suspend. */
+    int opt = WDIOS_DISABLECARD;
+    ioctl(*watchdog, WDIOC_SETOPTIONS, &opt);
+    write_all(*watchdog, "V", 1);
+    close(*watchdog);
+    *watchdog = -1;
 }
 
 int main(int argc, char **argv) {
@@ -347,13 +361,14 @@ int main(int argc, char **argv) {
     }
 
     log_text("android_starting\n");
+    handoff_watchdog_to_kernel(&watchdog);
     if (log_fd >= 0) {
         fsync(log_fd);
     }
     sync();
     child = fork();
     if (child == 0) {
-        keeper(watchdog, kmsg);
+        keeper(kmsg);
         _exit(0);
     }
     /* /system is read-only erofs and has no gru-proc, gru-sys, or bootlog.
@@ -365,9 +380,6 @@ int main(int argc, char **argv) {
     log_err("detach_gru_sys", umount2("/gru-sys", MNT_DETACH) == 0 ? 0 : errno);
     if (log_fd >= 0) {
         fsync(log_fd);
-    }
-    if (watchdog >= 0) {
-        close(watchdog);
     }
     if (kmsg >= 0) {
         close(kmsg);

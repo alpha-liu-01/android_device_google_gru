@@ -1,1 +1,1 @@
-console=tty0 loglevel=7 deferred_probe_timeout=30 security=selinux androidboot.selinux=permissive androidboot.hardware=gru androidboot.boot_devices=fe320000.mmc printk.devkmsg=on
+console=tty0 loglevel=7 deferred_probe_timeout=30 security=selinux androidboot.selinux=permissive androidboot.hardware=gru androidboot.boot_devices=fe320000.mmc printk.devkmsg=on drm_kms_helper.fbdev_emulation=0

@@ -197,6 +197,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/libarc4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/libarc4.ko \
     $(LOCAL_PATH)/modules/lz4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/lz4.ko \
     $(LOCAL_PATH)/modules/mac80211.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mac80211.ko \
+    $(LOCAL_PATH)/modules/mc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mc.ko \
     $(LOCAL_PATH)/modules/panfrost.ko:$(TARGET_COPY_OUT_VENDOR)/lib/panfrost.ko \
     $(LOCAL_PATH)/modules/raw_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/raw_diag.ko \
     $(LOCAL_PATH)/modules/rfcomm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfcomm.ko \
@@ -205,8 +206,11 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/rockchip-dfi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-dfi.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \
     $(LOCAL_PATH)/modules/rtc-cros-ec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rtc-cros-ec.ko \
+    $(LOCAL_PATH)/modules/snd-hwdep.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-hwdep.ko \
     $(LOCAL_PATH)/modules/snd-pcm-dmaengine.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-pcm-dmaengine.ko \
     $(LOCAL_PATH)/modules/snd-pcm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-pcm.ko \
+    $(LOCAL_PATH)/modules/snd-rawmidi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-rawmidi.ko \
+    $(LOCAL_PATH)/modules/snd-seq-device.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-seq-device.ko \
     $(LOCAL_PATH)/modules/snd-soc-core.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-core.ko \
     $(LOCAL_PATH)/modules/snd-soc-da7219.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-da7219.ko \
     $(LOCAL_PATH)/modules/snd-soc-dmic.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-dmic.ko \
@@ -219,6 +223,8 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/snd-soc-rt5514-spi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-rt5514-spi.ko \
     $(LOCAL_PATH)/modules/snd-soc-rt5514.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-soc-rt5514.ko \
     $(LOCAL_PATH)/modules/snd-timer.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-timer.ko \
+    $(LOCAL_PATH)/modules/snd-usb-audio.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-usb-audio.ko \
+    $(LOCAL_PATH)/modules/snd-usbmidi-lib.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-usbmidi-lib.ko \
     $(LOCAL_PATH)/modules/snd.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd.ko \
     $(LOCAL_PATH)/modules/soundcore.ko:$(TARGET_COPY_OUT_VENDOR)/lib/soundcore.ko \
     $(LOCAL_PATH)/modules/tcp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/tcp_diag.ko \

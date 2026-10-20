@@ -344,7 +344,7 @@
      - **修复**：
        1. 修改 `NetlinkMonitor.java`（`patches/packages_modules_Connectivity_netlink_monitor_einval.patch`）：在 `handleReadError()` 中将 `EINVAL` 与 `ENOBUFS` 一并返回 `false`，忽略瞬态 `sk_err` 而不销毁 `NETLINK_ROUTE` 监听套接字。
        2. 修改 `IpClientLinkObserver.java`（`patches/packages_modules_NetworkStack_restart_netlink_monitor.patch`）：在 `setIfindex()` 中增加自愈逻辑，若检测到 `!mNetlinkMonitor.isRunning()`，立即调用 `mNetlinkMonitor.start()` 重新打开监听套接字。
-       3. 重新编译 `NetworkStack` 与 `super.img`（大小 `1253753236` 字节，sha256 `fa3f44ba8ec16b37f0fe2b4cd2205d3c65f63d63e9d335197beb0345f61fdf3d`）。
+       3. 重新编译 `NetworkStack` 与 `super.img`（大小 `1253753236` 字节，sha256 `fa3f44ba8ec16b37f0fe2b4cd2205d3c65f63d63e9d335197beb0345f61fdf3d`），并上传至 postmarketOS `/home/user/phase3/` 生成最新 `/home/user/phase3/kernel.kpart`（大小 `14159872` 字节，sha256 `969cabf7e851b3ce6b802c5a2cec582beff44ad18a37a1cf7291dba8beb82f98`）。
 
 ## 事件
 

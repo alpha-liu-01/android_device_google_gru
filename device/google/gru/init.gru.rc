@@ -80,6 +80,12 @@ on early-init
     insmod /vendor/lib/snd-soc-dmic.ko
     insmod /vendor/lib/snd-soc-hdmi-codec.ko
     insmod /vendor/lib/snd-soc-rk3399-gru-sound.ko
+    insmod /vendor/lib/mc.ko
+    insmod /vendor/lib/snd-hwdep.ko
+    insmod /vendor/lib/snd-seq-device.ko
+    insmod /vendor/lib/snd-rawmidi.ko
+    insmod /vendor/lib/snd-usbmidi-lib.ko
+    insmod /vendor/lib/snd-usb-audio.ko
     # usbdrd_dwc3_0 is dr_mode=host, so there is no UDC. The gadget HAL
     # aborts when sys.usb.controller is empty. init.mainline.usb.rc would
     # otherwise set configfs to 2 and restart that HAL forever.

@@ -1,5 +1,5 @@
 diff --git a/healthd/BatteryMonitor.cpp b/healthd/BatteryMonitor.cpp
-index 465949e..68099f6 100644
+index 465949e..f5ae46b 100644
 --- a/healthd/BatteryMonitor.cpp
 +++ b/healthd/BatteryMonitor.cpp
 @@ -318,6 +318,25 @@ static BatteryMonitor::PowerSupplyType readPowerSupplyType(const String8& path)
@@ -48,7 +48,39 @@ index 465949e..68099f6 100644
  
      if (readFromFile(mHealthdConfig->chargingPolicyPath, &buf) > 0)
          mHealthInfo->chargingPolicy = getBatteryChargingPolicy(buf.c_str());
-@@ -958,8 +983,14 @@ void BatteryMonitor::init(struct healthd_config *hc) {
+@@ -576,6 +601,10 @@ void BatteryMonitor::updateValues(void) {
+             }
+         }
+     }
++
++    if (mHealthInfo->batteryStatus == BatteryStatus::CHARGING && !isChargerOnline()) {
++        mHealthInfo->batteryStatus = BatteryStatus::DISCHARGING;
++    }
+ }
+ 
+ static void doLogValues(const HealthInfo& props, const struct healthd_config& healthd_config) {
+@@ -639,6 +668,20 @@ int BatteryMonitor::getChargeStatus() {
+         if (readFromFile(mHealthdConfig->batteryStatusPath, &buf) > 0)
+             result = getBatteryStatus(buf.c_str());
+     }
++    if (result == BatteryStatus::CHARGING) {
++        bool anyChargerOnline = false;
++        for (size_t i = 0; i < mChargerNames.size(); i++) {
++            String8 path;
++            path.appendFormat("%s/%s/online", POWER_SUPPLY_SYSFS_PATH, mChargerNames[i].c_str());
++            if (getIntField(path)) {
++                anyChargerOnline = true;
++                break;
++            }
++        }
++        if (!anyChargerOnline) {
++            result = BatteryStatus::DISCHARGING;
++        }
++    }
+     return static_cast<int>(result);
+ }
+ 
+@@ -958,8 +1001,14 @@ void BatteryMonitor::init(struct healthd_config *hc) {
                  if (mHealthdConfig->batteryChargeTimeToFullNowPath.empty()) {
                      path.clear();
                      path.appendFormat("%s/%s/time_to_full_now", POWER_SUPPLY_SYSFS_PATH, name);
@@ -64,7 +96,7 @@ index 465949e..68099f6 100644
                  }
  
                  if (mHealthdConfig->batteryFullChargeDesignCapacityUahPath.empty()) {
-@@ -973,16 +1004,27 @@ void BatteryMonitor::init(struct healthd_config *hc) {
+@@ -973,16 +1022,27 @@ void BatteryMonitor::init(struct healthd_config *hc) {
                      path.clear();
                      path.appendFormat("%s/%s/current_avg",
                                        POWER_SUPPLY_SYSFS_PATH, name);
@@ -94,7 +126,7 @@ index 465949e..68099f6 100644
                  }
  
                  if (mHealthdConfig->batteryTemperaturePath.empty()) {
-@@ -998,7 +1040,8 @@ void BatteryMonitor::init(struct healthd_config *hc) {
+@@ -998,7 +1058,8 @@ void BatteryMonitor::init(struct healthd_config *hc) {
                      path.clear();
                      path.appendFormat("%s/%s/technology",
                                        POWER_SUPPLY_SYSFS_PATH, name);

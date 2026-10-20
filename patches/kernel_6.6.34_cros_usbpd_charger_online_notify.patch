@@ -1,0 +1,171 @@
+--- a/drivers/power/supply/cros_usbpd-charger.c
++++ b/drivers/power/supply/cros_usbpd-charger.c
+@@ -13,13 +13,16 @@
+ #include <linux/platform_device.h>
+ #include <linux/power_supply.h>
+ #include <linux/slab.h>
++#include <linux/workqueue.h>
+ 
+ #define CHARGER_USBPD_DIR_NAME			"CROS_USBPD_CHARGER%d"
+ #define CHARGER_DEDICATED_DIR_NAME		"CROS_DEDICATED_CHARGER"
+ #define CHARGER_DIR_NAME_LENGTH		(sizeof(CHARGER_USBPD_DIR_NAME) >= \
+ 					 sizeof(CHARGER_DEDICATED_DIR_NAME) ? \
+ 					 sizeof(CHARGER_USBPD_DIR_NAME) : \
+ 					 sizeof(CHARGER_DEDICATED_DIR_NAME))
+-#define CHARGER_CACHE_UPDATE_DELAY		msecs_to_jiffies(500)
++#define CHARGER_CACHE_UPDATE_DELAY		msecs_to_jiffies(50)
++#define CHARGER_POLL_INTERVAL			msecs_to_jiffies(100)
++#define CHARGER_POLL_RETRIES			5
+ #define CHARGER_MANUFACTURER_MODEL_LENGTH	32
+ 
+ #define DRV_NAME "cros-usbpd-charger"
+@@ -50,6 +53,8 @@ struct charger_data {
+ 	int num_registered_psy;
+ 	struct port_data *ports[EC_USB_PD_MAX_PORTS];
+ 	struct notifier_block notifier;
++	struct delayed_work poll_work;
++	int poll_count;
+ };
+ 
+ static enum power_supply_property cros_usbpd_charger_props[] = {
+@@ -179,11 +184,35 @@ static int cros_usbpd_charger_get_discovery_info(struct port_data *port)
+ 	return 0;
+ }
+ 
++static bool cros_usbpd_charger_is_port_connected(struct port_data *port)
++{
++	struct charger_data *charger = port->charger;
++	struct ec_params_usb_pd_control pd_control;
++	struct ec_response_usb_pd_control_v1 resp;
++	int ret;
++
++	if (cros_usbpd_charger_port_is_dedicated(port))
++		return true;
++
++	pd_control.port = port->port_number;
++	pd_control.role = USB_PD_CTRL_ROLE_NO_CHANGE;
++	pd_control.mux = USB_PD_CTRL_MUX_NO_CHANGE;
++	pd_control.swap = USB_PD_CTRL_SWAP_NONE;
++	ret = cros_usbpd_charger_ec_command(charger, 1,
++					    EC_CMD_USB_PD_CONTROL,
++					    &pd_control, sizeof(pd_control),
++					    &resp, sizeof(resp));
++	if (ret < 0)
++		return true;
++
++	return !!(resp.enabled & PD_CTRL_RESP_ENABLED_CONNECTED);
++}
++
+ static int cros_usbpd_charger_get_power_info(struct port_data *port)
+ {
+ 	struct charger_data *charger = port->charger;
+ 	struct ec_response_usb_pd_power_info resp;
+ 	struct ec_params_usb_pd_power_info req;
+-	int last_psy_status, last_psy_usb_type;
++	int last_psy_status, last_psy_usb_type, last_psy_online;
+ 	struct device *dev = charger->dev;
+ 	int ret;
+ 
+@@ -197,8 +226,14 @@ static int cros_usbpd_charger_get_power_info(struct port_data *port)
+ 		return ret;
+ 	}
+ 
++	if (!cros_usbpd_charger_is_port_connected(port)) {
++		resp.role = USB_PD_PORT_POWER_DISCONNECTED;
++		resp.type = USB_CHG_TYPE_NONE;
++	}
++
+ 	last_psy_status = port->psy_status;
+ 	last_psy_usb_type = port->psy_usb_type;
++	last_psy_online = port->psy_online;
+ 
+ 	switch (resp.role) {
+ 	case USB_PD_PORT_POWER_DISCONNECTED:
+@@ -298,7 +333,8 @@ static int cros_usbpd_charger_get_power_info(struct port_data *port)
+ 	 * their next poll of power supply status.
+ 	 */
+ 	if (last_psy_usb_type != port->psy_usb_type ||
+-	    last_psy_status != port->psy_status)
++	    last_psy_status != port->psy_status ||
++	    last_psy_online != port->psy_online)
+ 		power_supply_changed(port->psy);
+ 
+ 	return 0;
+@@ -361,27 +397,13 @@ static int cros_usbpd_charger_get_prop(struct power_supply *psy,
+ {
+ 	struct port_data *port = power_supply_get_drvdata(psy);
+ 	struct charger_data *charger = port->charger;
+-	struct cros_ec_device *ec_device = charger->ec_device;
+ 	struct device *dev = charger->dev;
+ 	int ret;
+ 
+ 	/* Only refresh ec_port_status for dynamic properties */
+ 		switch (psp) {
+ 	case POWER_SUPPLY_PROP_ONLINE:
+-		/*
+-		 * If mkbp_event_supported, then we can be assured that
+-		 * the driver's state for the online property is consistent
+-		 * with the hardware. However, if we aren't event driven,
+-		 * the optimization before to skip an ec_port_status get
+-		 * and only returned cached values of the online property will
+-		 * cause a delay in detecting a cable attach until one of the
+-		 * other properties are read.
+-		 *
+-		 * Allow an ec_port_status refresh for online property check
+-		 * if we're not already online to check for plug events if
+-		 * not mkbp_event_supported.
+-		 */
+-		if (ec_device->mkbp_event_supported || port->psy_online)
+-			break;
+-		fallthrough;
++	case POWER_SUPPLY_PROP_STATUS:
++	case POWER_SUPPLY_PROP_USB_TYPE:
+ 	case POWER_SUPPLY_PROP_CURRENT_MAX:
+ 	case POWER_SUPPLY_PROP_VOLTAGE_MAX_DESIGN:
+ 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
+@@ -504,6 +526,20 @@ static int cros_usbpd_charger_property_is_writeable(struct power_supply *psy,
+ 	return ret;
+ }
+ 
++static void cros_usbpd_charger_poll_work(struct work_struct *work)
++{
++	struct charger_data *charger = container_of(to_delayed_work(work),
++						    struct charger_data,
++						    poll_work);
++
++	if (charger->num_registered_psy > 0)
++		cros_usbpd_charger_power_changed(charger->ports[0]->psy);
++
++	if (--charger->poll_count > 0)
++		mod_delayed_work(system_wq, &charger->poll_work,
++				 CHARGER_POLL_INTERVAL);
++}
++
+ static int cros_usbpd_charger_ec_event(struct notifier_block *nb,
+ 				       unsigned long host_event,
+ 				       void *_notify)
+@@ -512,6 +548,8 @@ static int cros_usbpd_charger_ec_event(struct notifier_block *nb,
+ 						    notifier);
+ 
+ 	cros_usbpd_charger_power_changed(charger->ports[0]->psy);
++	charger->poll_count = CHARGER_POLL_RETRIES;
++	mod_delayed_work(system_wq, &charger->poll_work, CHARGER_POLL_INTERVAL);
+ 	return NOTIFY_OK;
+ }
+ 
+@@ -520,6 +558,7 @@ static void cros_usbpd_charger_unregister_notifier(void *data)
+ 	struct charger_data *charger = data;
+ 
+ 	cros_usbpd_unregister_notify(&charger->notifier);
++	cancel_delayed_work_sync(&charger->poll_work);
+ }
+ 
+ static int cros_usbpd_charger_probe(struct platform_device *pd)
+@@ -653,6 +692,7 @@ static int cros_usbpd_charger_probe(struct platform_device *pd)
+ 	}
+ 
+ 	/* Get PD events from the EC */
++	INIT_DELAYED_WORK(&charger->poll_work, cros_usbpd_charger_poll_work);
+ 	charger->notifier.notifier_call = cros_usbpd_charger_ec_event;
+ 	ret = cros_usbpd_register_notify(&charger->notifier);
+ 	if (ret < 0) {

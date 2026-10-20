@@ -364,7 +364,28 @@
      1. **`StreamAlsa.cpp`**：当 `device.isExternal == true`（外部 USB 声卡）时，不再创建 `MonoPipe` 和 `outputIoThread`/`inputIoThread` 中转线程，而是在 HAL 实时 worker 线程的 `StreamAlsa::transfer()` 中直接调用 `proxy_write_with_retries()` / `proxy_read_with_retries()` 进行同步阻塞 ALSA 读写。这样每次 `burst` 直接由内核 `snd-usb-audio` 的硬件等时 URB 完成时钟精准节流（0 丢帧、0 线程竞争），同时保持内置扬声器（`!device.isExternal`）原有路径完全不变。
      2. **`alsa/Utils.cpp`**：在 `readAlsaDeviceInfo()` 中确保 `default_config.period_count` 至少为 `DEFAULT_PERIOD_COUNT`（`4`，即 `4 * 5ms = 20ms` 环形缓冲），与 `AudioFlinger` 的 20ms `mNormalFrameCount` 混音周期对齐。
      3. **`usb/StreamUsb.cpp`**：将 `readWriteRetries` 从 `1` 提升至 `3`。
-     4. 重新编译 `/apex/com.android.hardware.audio/bin/hw/android.hardware.audio.service-aidl.example` 并通过 `mount --bind` 热替换至实机。
+     4. 重新编译 `/apex/com.android.hardware.audio/bin/hw/android.hardware.audio.service-aidl.example` 并通过 `mount --bind` 热替换至实机，两款 Type-C DAC 耳机实测音质清晰无杂音，测试通过。
+
+### 第二步：修复连接 PC 拔线后充电状态常驻卡死与「正在无线充电」乌龙状态
+
+1. **内核驱动 `cros_usbpd-charger.c` 深度修复（补丁已保存至 `patches/kernel_6.6.34_cros_usbpd_charger_online_notify.patch`，更新后的 `cros_usbpd-charger.ko` 已同步至 `device/google/gru/modules/`）**：
+   - **补齐 `last_psy_online != port->psy_online` 的 uevent 通知判据**：
+     - 在 `cros_usbpd_charger_get_power_info()` 中记录 `last_psy_online = port->psy_online;`，当 `last_psy_online != port->psy_online` 时同样调用 `power_supply_changed(port->psy)`。
+   - **实机三次插拔 PC 日志复盘：定位 VBUS 电容放电 43ms 竞态与单次 PD 事件漏检**：
+     - 对比实机 `dmesg` 发现：每次拔掉独立 PD 充电器时，EC 会先后发出**两次**相隔 `43～45ms` 的 `EC_HOST_EVENT_PD_MCU` 事件（`3363.352s -> 3363.395s`、`3370.627s -> 3370.672s`：第 1 次为 CC 断开，第 2 次为 43ms 后 VBUS 放电完毕与 PD 合约拆除）；
+     - 而连接 PC（5V BC1.2 SDP，无 PD 合约）拔线时，3 次测试中有 2 次（`3315.929s`、`3342.920s`）EC 仅在 CC 断开瞬间（`t = 0ms`）发出了 **1 次** `EC_HOST_EVENT_PD_MCU` 事件！在 `t = 0ms` 时刻，虽然 `EC_CMD_USB_PD_CONTROL`（v1）已立即报告 `!(resp.enabled & PD_CTRL_RESP_ENABLED_CONNECTED)`（即 `extcon` 已立即识别为 `Not connected`），但主板 VBUS 滤波电容尚需约 `43ms` 才能放电至阈值以下，导致 `t = 0ms` 时查询 `EC_CMD_USB_PD_POWER_INFO` 仍返回 `SINK_NOT_CHARGING`（`psy_online = 1`）；而 `43ms` 后 VBUS 跌零时，由于无 PD 合约拆除，EC 不再发送第 2 次中断！
+   - **三重根治机制**：
+     1. **结合 `EC_CMD_USB_PD_CONTROL`（v1）物理连接位立即判据**：新增 `cros_usbpd_charger_is_port_connected()`（与 `extcon-usbc-cros-ec.c` 一致，查询 `EC_CMD_USB_PD_CONTROL` 的 `PD_CTRL_RESP_ENABLED_CONNECTED` 位）。一旦 CC 物理断开（`!cros_usbpd_charger_is_port_connected(port)`），在 `t = 0ms` 立即将 `resp.role` 置为 `USB_PD_PORT_POWER_DISCONNECTED`（`psy_online = 0`），无视 VBUS 电容残余电压。
+     2. **EC 事件后 `100ms × 5` 延迟复核工作队列（`poll_work`）**：每次 `cros_usbpd_charger_ec_event()` 触发时，除立即查询外，自动调度 `poll_work` 在 `+100ms`、`+200ms`、`+300ms`、`+400ms`、`+500ms` 复核端口状态，彻底覆盖拔线时 ~43ms 的 VBUS 泄放窗口与插线时 BC1.2 慢速协商窗口。
+     3. **移除 `POWER_SUPPLY_PROP_ONLINE` 缓存短路并将 `CHARGER_CACHE_UPDATE_DELAY` 从 `500ms` 缩短至 `50ms`**：既能合并单次 `healthd` `updateValues()` 内的多个属性读取（耗时 <2ms），又不会在 `healthd` 收到 uevent 后返回陈旧缓存。
+
+2. **用户空间 `healthd`（`BatteryMonitor.cpp`）消除「正在无线充电」乌龙状态（补丁已更新至 `patches/system_core_healthd_battery_monitor.patch`）**：
+   - 在 `BatteryMonitor::updateValues()` 末尾以及 `BatteryMonitor::getChargeStatus()` 中增加一致性修正：当所有外部充电器均不在线（`!isChargerOnline()`，即 `AC`/`USB`/`Wireless`/`Dock` 全部为 `false`）时，若智能电池 `sbs-9-000b` 因 TI BQ40Z50 库仑计平均电流寄存器 1～2 秒滞后仍短暂返回 `BatteryStatus::CHARGING`，将其修正为 `BatteryStatus::DISCHARGING`。
+   - 彻底消除拔线瞬间因 `batteryStatus == CHARGING && pluggedStatus == 0` 被 Android SettingsLib 误判为「正在无线充电」或卡在充电图标的现象。
+
+3. **实机免重启热加载状态**：
+   - 已在实机卸载旧 `cros_usbpd_charger` 并 `insmod` 包含 `EC_CMD_USB_PD_CONTROL` 连接判据与 `poll_work` 延迟复核的 `cros_usbpd-charger.ko`；
+   - 已重编 `android.hardware.health-service.example`，通过 `mount --bind` 覆盖 `/vendor/bin/hw/android.hardware.health-service.example` 并重启 `vendor.health-default` 服务。
 
 ## 事件
 
@@ -372,4 +393,5 @@
 | :--- | :--- |
 | 2026-10-20 | 完成 USB-C 全功能诊断与四步修复规划文档 `docs/usb.md`。 |
 | 2026-10-20 | 完成第一步（USB-C 音频）代码修改并通过 `touch /apex/apex-info-list.xml` 在实机免重启热加载 `snd-usb-audio.ko`、`IModule/usb` 与 `usb_audio_policy_configuration.xml`，进入人工插拔 DAC 声卡测试阶段。 |
-| 2026-10-20 | 定位并修复 USB-C DAC 播放爆电平杂音（`AHAL_StreamAlsa` 非阻塞 `MonoPipe` 溢出每秒丢弃数千帧），重编 `android.hardware.audio.service-aidl.example` 并热挂载至实机。 |
+| 2026-10-20 | 定位并修复 USB-C DAC 播放爆电平杂音（`AHAL_StreamAlsa` 非阻塞 `MonoPipe` 溢出每秒丢弃数千帧），重编 `android.hardware.audio.service-aidl.example` 并热挂载至实机，人工验证耳机播放正常。 |
+| 2026-10-20 | 完成第二步（修复连接 PC 拔线后充电状态常驻卡死与「正在无线充电」乌龙状态），重编并热加载 `cros_usbpd-charger.ko` 与 `android.hardware.health-service.example`，等待人工插拔充电器与 PC 测试。 |

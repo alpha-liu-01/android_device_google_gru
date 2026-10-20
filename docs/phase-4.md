@@ -160,6 +160,37 @@
   3. **「设置 -> 声音」与「设置 -> 无障碍」空指针修复（不触碰蓝牙开关）**：在 `LocalMediaManager.java`、`AccessibilitySettings.java`、`AccessibilityHearingAidPreferenceController.java` 与 `HearingAidHelper.java` 中加入空指针判空，在不开启 `android.hardware.bluetooth` 的前提下彻底修复两处设置页崩溃。
 - **构建产物**：
   - `out/target/product/gru/super.img` 大小 `1249522068` 字节，sha256 `0d9351346989a5326707f5fb777c5c34a04c1c01ebae156badbb682e6f5e5146`，已上传至 `10.0.0.133:/home/user/phase3/super.img` 并校验一致。
+- **实机验证与日志对照分析（`/tmp/bootlog22.txt`，8130 行）**：
+  - **启动耗时与调频复核**：`zram0` swap（`2919648 kB`）在 `76.15s` 启用，`surfaceflinger` 在 `76.20s` 启动，`sys.boot_completed=1` 在 `128.54s` 完成（`surfaceflinger` 至 `boot_completed` 耗时 `52.3s`）；`GRU_FREQ` 确认小核 `1.512 GHz`、大核 `2.016 GHz`、GPU `800 MHz`、内存控制器 `928 MHz` 全程生效；内置盘 eMMC `mmcblk1p1` 校验和保持 `5c188eeb7a89fdb1bf442ccccd61a556ad5e232149454659853e7dee98f0068a`。
+  - **本轮验证通过的 4 项功能**：
+    1. **背光滑块线性化校正（`sys.brightness.disable_gamma_conversion=true`）**：消除 Android HLG 曲线与内核 `pwm-backlight` CIE 1931 三次方曲线的双重非线性叠加，下拉菜单亮度滑块全程均匀线性调节。
+    2. **虚拟导航栏（`config_showNavigationBar=true`）**：三键导航与手势导航均正常显示与切换。
+    3. **屏幕虚拟键盘（IME）自动弹出（`cros_ec.kl` + `show_ime_with_hard_keyboard=1`）**：`EventHub`（`bootlog22.txt` 第 6129 行）显式加载 `/vendor/usr/keylayout/cros_ec.kl`，将 `cros_ec` 识别为纯 `classes=KEYBOARD`（不再携带 `ALPHAKEY` 外接硬键盘标志），同时 `Elan Touchscreen`（第 6135 行）显式加载 `/vendor/usr/idc/Elan_Touchscreen.idc`；点击输入框时屏幕软键盘正常弹出。
+    4. **「设置 -> 隐私（Privacy）」与「设置 -> 无障碍（Accessibility）」不再闪退**：此前闪退的两个页面现均正常打开，`bootlog22.txt` 中 `AccessibilitySettings` 崩溃次数为 0。
+  - **尚存预期内现象（待第 6/7 步蓝牙与音频启用后自然消解）**：
+    - 「设置 -> 已连接的设备（Connected devices）」与「设置 -> 声音（Sound）」在蓝牙模块（第 6 步）与音频（第 7 步）尚未启用前仍会因 `BluetoothAdapter.getDefaultAdapter() == null`（`BluetoothUtils.isAudioSharingSupported:736`）及 `mInfoMediaManager == null`（`LocalMediaManager.getRemoteRoutingSessions:548`）触发空指针退出，待第 6 步启用蓝牙后复核。
+  - **日志中未在表面显现的隐性问题排查（`bootlog22.txt`，直接关系第 5 步 Wi-Fi）**：
+    1. **VINTF 缺少 `android.hardware.wifi.IWifi/default`（第 6592 行）**：`bootlog22.txt` 记录 `servicemanager: Caller(pid=3414,uid=1000,sid=u:r:system_server:s0) Could not find android.hardware.wifi.IWifi/default in the VINTF manifest`，而仅找到了 `ISupplicant/default`。原因是 `device/mainline/common` 默认只打包了 `com.android.hardware.wpa_supplicant` APEX，**没有包含 `android.hardware.wifi-service`（AIDL Vendor Wi-Fi HAL）**，且 APEX 版的 `wpa_supplicant` 只从 `/apex/com.android.hardware.wpa_supplicant/etc/wifi/` 读取配置而忽略 `/vendor/etc/wifi/wpa_supplicant_overlay.conf`。若不参照 Trogdor 切换为 `legacy` 形态并补齐 `android.hardware.wifi-service`、`BOARD_WLAN_DEVICE := qcwcn` 与 `libcld80211`，即使内核加载了 `ath10k_pci.ko` 生成 `wlan0`，Android 框架也无法打开 Wi-Fi 开关。
+    2. **恢复 `adbd` 时必须隔离 `/dev/usb-ffs/adb`（避免无 UDC 空转刷屏）**：Scarlet 的两路 Type-C 控制器在 `rk3399-gru.dtsi` / `rk3399-gru-chromebook.dtsi` 中均硬编码为 `dr_mode = "host"`，内核中无 UDC。`adbd`（`packages/modules/adb/daemon/main.cpp:259`）只要检测到 `/dev/usb-ffs/adb/ep0` 存在就会启动 `usb_init()` 线程死循环写入 functionfs 描述符（每秒刷屏 `read descriptors` / `bcdVersion`）。`init.mainline.usb.rc` 会在 `on early-boot` 无条件挂载 `/dev/usb-ffs/adb`；因此在第 5 步恢复 `adbd` 监听 TCP `5555` 端口的同时，必须设 `TARGET_USB_INIT_SCRIPT := none` 阻止挂载 `/dev/usb-ffs/adb`，使 `adbd` 纯净运行在 TCP/IP 模式。
+
+### 5. Wi-Fi（QCA6174 `ath10k_pci`）与无线 `adb`（2026-10-19）
+
+- **固件与内核模块清单**：
+  - 从机身 postmarketOS `/lib/firmware/ath10k/QCA6174/hw3.0/` 提取并解压 4 个固件文件放入 `device/google/gru/firmware/ath10k/QCA6174/hw3.0/`（安装至 `/vendor/firmware/ath10k/QCA6174/hw3.0/`）：`board-2.bin`（723 KB）、`board.bin`（8 KB）、`firmware-6.bin`（690 KB，`WLAN.RM.4.4.1-00309` API 6）、`firmware-4.bin`（717 KB）；配合 `wireless-regdb` 已安装的 `/vendor/firmware/regulatory.db` 与 `regulatory.db.p7s`。
+  - 从 `6.6.34-phase2` `modinstall` 提取 `ath10k` 依赖链及 WPA2/WPA3（CCMP/AES-CMAC）硬件加密模块共 13 个 `.ko` 放入 `/vendor/lib/`：
+    - 无线协议栈与驱动：`rfkill.ko`、`libarc4.ko`、`cfg80211.ko`、`mac80211.ko`、`ath.ko`、`ath10k_core.ko`、`ath10k_pci.ko`。
+    - 802.11i / WPA2 / WPA3 加密模块（内核配置为 `=m`）：`arc4.ko`、`ccm.ko`、`cmac.ko`、`aes-ce-cipher.ko`、`aes-ce-ccm.ko`、`aes-ce-blk.ko`。
+  - 在 `init.gru.rc` 的 `on early-init` 最开头执行 `write /sys/module/firmware_class/parameters/path /vendor/firmware`（确保在 `insmod ath10k_pci.ko` 触发 PCIe `0000:01:00.0` 异步请求固件前固件路径已生效），随后按依赖拓扑顺序加载上述模块。
+- **Wi-Fi HAL 与 `wpa_supplicant`（参照 `third_party/android_device_google_trogdor-lineage-24`）**：
+  - 在 `BoardConfig.mk` 与 `device.mk` 中设 `TARGET_HOSTAPD_AND_WPA_SUPPLICANT_FORM := legacy`、`BOARD_WLAN_DEVICE := qcwcn`、`WIFI_HIDL_UNIFIED_SUPPLICANT_SERVICE_RC_ENTRY := false`，加入 `hardware/qcom/wlan` 与 `hardware/qcom/wlan/legacy` Soong 命名空间。
+  - 打包 `android.hardware.wifi-service`（提供 `android.hardware.wifi.IWifi/default` VINTF AIDL 服务，静态链接 `libwifi-hal-qcom`）、`libcld80211`、`wpa_supplicant`、`wpa_supplicant.conf`、`hostapd`、`wificond`、`libwpa_client`。
+  - 拷入 `wpa_supplicant_overlay.conf`（`disable_scan_offload=1`、`p2p_disabled=1`、`tdls_external_control=1`）与 `p2p_supplicant_overlay.conf` 至 `/vendor/etc/wifi/`，以及 `android.hardware.wifi.xml`、`android.hardware.wifi.direct.xml`、`android.hardware.wifi.passpoint.xml` 权限声明；配置 `wifi.interface=wlan0`。
+  - 在 `init.gru.rc` 中添加 `on zygote-start` 创建 `/data/vendor/wifi/wpa/sockets` 与 `/data/vendor/wifi/hostapd/sockets`（`0770 wifi wifi`），并定义 `wpa_supplicant` 服务（`-O/data/vendor/wifi/wpa/sockets -Dnl80211 -g@android:wpa_wlan0`）。
+- **无线 `adb`（TCP/IP 端口 `5555`）与 Type-C 角色核对**：
+  - 核对 `rk3399-gru.dtsi` 与 `rk3399-gru-chromebook.dtsi`：两路 `usbdrd_dwc3_0` / `usbdrd_dwc3_1` 在设备树中均为 `dr_mode = "host"`，无 peripheral/otg UDC。
+  - 设置 `TARGET_USB_INIT_SCRIPT := none` 排除 `init.mainline.usb.rc`（不挂载 `/dev/usb-ffs/adb`，避免 `adbd` 启动 USB functionfs 线程触发内核每秒刷屏），移除 `init.gru.rc` 中旧的 `on property:init.svc.adbd=running stop adbd`，改为设置 `service.adb.tcp.port=5555` 并在 `on boot && property:service.adb.tcp.port=5555` 启动 `adbd`，连上局域网后可直接 `adb connect <平板IP>:5555`。
+- **构建产物**：
+  - `out/target/product/gru/super.img` 大小 `1251934612` 字节，sha256 `00a872f695f2ee091496a310e8294d95ad4e82b7389fa3ec51dc2f476e1ea6fb`，已上传至 `10.0.0.133:/home/user/phase3/super.img` 并校验一致。
 
 ## 事件
 
@@ -171,3 +202,4 @@
 | 2026-10-19 | 完成阶段 4 第 3 项（触摸、旋转、Wacom 手写笔）及 `fuse.ko` 构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `1e240695d3c4ef4e60755942ae2d0d75095c6a8d4236b4d286caa87662656ab4`（`1249505684` 字节），包含 `fuse.ko`、`i2c-hid` 手写笔模块、`cros_ec_sensors` IIO 传感器模块、`android.hardware.sensors@2.1-gru-subhal` 与触摸/手写笔 IDC 配置。 |
 | 2026-10-19 | 阶段 4 第 3 项实机验证通过（`bootlog21.txt`）：Wacom 手写笔四个方向点击与悬停全部正常、自动旋转四个方向流畅且帧率一致、「设置 -> 存储」正常打开；同时定位了缺少虚拟导航栏、软键盘不弹出、「设置 -> 声音 / 无障碍」因缺蓝牙声明触发 NPE 等问题，排入第 4 步（背光调节）一并修复。 |
 | 2026-10-19 | 完成阶段 4 第 4 项（背光滑块线性化校正、虚拟导航栏 Overlay、软键盘 `cros_ec.kl` 修复、「设置 -> 声音 / 无障碍」NPE 修复）构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `0d9351346989a5326707f5fb777c5c34a04c1c01ebae156badbb682e6f5e5146`（`1249522068` 字节）。 |
+| 2026-10-19 | 阶段 4 第 4 项实机验证通过（`bootlog22.txt`）：下拉菜单亮度滑块全程线性调节、三键与手势虚拟导航栏正常、屏幕虚拟键盘正常弹出、「设置 -> 隐私」与「设置 -> 无障碍」不再闪退；同时从日志发现 VINTF 缺少 `IWifi/default` 及 `adbd` 需隔离 `/dev/usb-ffs/adb`，并完成阶段 4 第 5 项（QCA6174 `ath10k_pci` 固件与 13 个无线/加密模块、`android.hardware.wifi-service`、nl80211 `wpa_supplicant`、TCP `5555` 无线 `adb`）构建与上传（新 `super.img` 校验和 `00a872f695f2ee091496a310e8294d95ad4e82b7389fa3ec51dc2f476e1ea6fb`，`1251934612` 字节）。 |

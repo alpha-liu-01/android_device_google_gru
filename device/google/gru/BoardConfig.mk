@@ -21,10 +21,16 @@ TARGET_GRAPHICS_ALLOCATOR_HAL := minigbm-upstream
 # ioctl this 6.6 kernel does not implement. msm pulls the Qualcomm backend.
 TARGET_MINIGBM_PLATFORM := generic
 BOARD_MESA3D_GALLIUM_DRIVERS := panfrost
+TARGET_HOSTAPD_AND_WPA_SUPPLICANT_FORM := legacy
+TARGET_USB_INIT_SCRIPT := none
 include $(MAINLINE_COMMON_PATH)/optional/options.mk
 SUPPORTS_INLINE_KERNEL_BUILDING := false
 
 include $(MAINLINE_COMMON_PATH)/BoardConfigMainlineCommon.mk
+
+# Wi-Fi (QCA6174 / ath10k_pci)
+BOARD_WLAN_DEVICE := qcwcn
+WIFI_HIDL_UNIFIED_SUPPLICANT_SERVICE_RC_ENTRY := false
 
 # The kernel is the existing 6.6.34-phase2 image. Do not build one here.
 TARGET_NO_KERNEL := true

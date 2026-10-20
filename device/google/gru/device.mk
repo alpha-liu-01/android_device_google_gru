@@ -21,6 +21,9 @@ TARGET_MINIGBM_PLATFORM := generic
 # external/drm_hwcomposer-upstream has no Android.bp in this tree.
 # The AIDL HWC3 APEX is external/drm_hwcomposer.
 TARGET_DRM_HWCOMPOSER_VARIANT := aosp
+# The panel cannot be tapped yet. adb must not wait for a confirmation dialog.
+TARGET_HOSTAPD_AND_WPA_SUPPLICANT_FORM := legacy
+TARGET_USB_INIT_SCRIPT := none
 include device/mainline/common/optional/options.mk
 SUPPORTS_INLINE_KERNEL_BUILDING := false
 
@@ -37,7 +40,9 @@ PRODUCT_SHIPPING_API_LEVEL := 36
 PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS := false
 
 PRODUCT_SOONG_NAMESPACES += \
-    $(LOCAL_PATH)
+    $(LOCAL_PATH) \
+    hardware/qcom/wlan \
+    hardware/qcom/wlan/legacy
 
 PRODUCT_CHARACTERISTICS := tablet
 
@@ -46,10 +51,14 @@ PRODUCT_PRODUCT_PROPERTIES += \
     ro.adb.secure=0 \
     ro.sf.lcd_density=260 \
     persist.sys.usb.config=adb \
-    sys.brightness.disable_gamma_conversion=true
+    sys.brightness.disable_gamma_conversion=true \
+    wifi.interface=wlan0 \
+    wifi.direct.interface=p2p-dev-wlan0 \
+    wifi.supplicant_scan_interval=15
 
 PRODUCT_VENDOR_PROPERTIES += \
     persist.sys.zram_enabled=1 \
+    service.adb.tcp.port=5555 \
     ro.opengles.version=196609 \
     vendor.hwc.drm.device=/dev/dri/card0 \
     vendor.minigbm.device=/dev/dri/card0 \
@@ -57,12 +66,25 @@ PRODUCT_VENDOR_PROPERTIES += \
     debug.hwui.renderer=skiagl \
     ro.surface_flinger.supports_background_blur=0
 
+FORCE_USE_ANDROIDMK_FOR_WPA_CONF := true
 PRODUCT_PACKAGES += \
     hwservicemanager \
     android.hardware.sensors-service.multihal \
-    android.hardware.sensors@2.1-gru-subhal
+    android.hardware.sensors@2.1-gru-subhal \
+    android.hardware.wifi-service \
+    hostapd \
+    libcld80211 \
+    libwpa_client \
+    wpa_supplicant \
+    wpa_supplicant.conf \
+    wificond
 
 PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.hardware.wifi.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.xml \
+    frameworks/native/data/etc/android.hardware.wifi.direct.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.direct.xml \
+    frameworks/native/data/etc/android.hardware.wifi.passpoint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.passpoint.xml \
+    $(LOCAL_PATH)/wpa_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/wpa_supplicant_overlay.conf \
+    $(LOCAL_PATH)/p2p_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/p2p_supplicant_overlay.conf \
     $(LOCAL_PATH)/etc/sensors/hals.conf:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/hals.conf \
     $(LOCAL_PATH)/etc/sensors/sensor_hal_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/sensor_hal_configuration.xml \
     $(LOCAL_PATH)/idc/Elan_Touchscreen.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Elan_Touchscreen.idc \
@@ -89,7 +111,21 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/ueventd.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.gru.rc \
     $(LOCAL_PATH)/gru-logcat.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gru-logcat.sh \
     $(LOCAL_PATH)/firmware/rockchip/dptx.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/rockchip/dptx.bin \
+    $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board-2.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board-2.bin \
+    $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board.bin \
+    $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/firmware-4.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/firmware-4.bin \
+    $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/firmware-6.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/firmware-6.bin \
+    $(LOCAL_PATH)/modules/aes-ce-blk.ko:$(TARGET_COPY_OUT_VENDOR)/lib/aes-ce-blk.ko \
+    $(LOCAL_PATH)/modules/aes-ce-ccm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/aes-ce-ccm.ko \
+    $(LOCAL_PATH)/modules/aes-ce-cipher.ko:$(TARGET_COPY_OUT_VENDOR)/lib/aes-ce-cipher.ko \
     $(LOCAL_PATH)/modules/af_key.ko:$(TARGET_COPY_OUT_VENDOR)/lib/af_key.ko \
+    $(LOCAL_PATH)/modules/arc4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/arc4.ko \
+    $(LOCAL_PATH)/modules/ath.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ath.ko \
+    $(LOCAL_PATH)/modules/ath10k_core.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ath10k_core.ko \
+    $(LOCAL_PATH)/modules/ath10k_pci.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ath10k_pci.ko \
+    $(LOCAL_PATH)/modules/ccm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ccm.ko \
+    $(LOCAL_PATH)/modules/cfg80211.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cfg80211.ko \
+    $(LOCAL_PATH)/modules/cmac.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cmac.ko \
     $(LOCAL_PATH)/modules/cpufreq-dt.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cpufreq-dt.ko \
     $(LOCAL_PATH)/modules/cros-ec-sensorhub.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cros-ec-sensorhub.ko \
     $(LOCAL_PATH)/modules/cros_ec_sensors.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cros_ec_sensors.ko \
@@ -102,8 +138,11 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/i2c-hid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid.ko \
     $(LOCAL_PATH)/modules/industrialio-triggered-buffer.ko:$(TARGET_COPY_OUT_VENDOR)/lib/industrialio-triggered-buffer.ko \
     $(LOCAL_PATH)/modules/kfifo_buf.ko:$(TARGET_COPY_OUT_VENDOR)/lib/kfifo_buf.ko \
+    $(LOCAL_PATH)/modules/libarc4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/libarc4.ko \
     $(LOCAL_PATH)/modules/lz4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/lz4.ko \
+    $(LOCAL_PATH)/modules/mac80211.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mac80211.ko \
     $(LOCAL_PATH)/modules/panfrost.ko:$(TARGET_COPY_OUT_VENDOR)/lib/panfrost.ko \
+    $(LOCAL_PATH)/modules/rfkill.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfkill.ko \
     $(LOCAL_PATH)/modules/rk3399_dmc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rk3399_dmc.ko \
     $(LOCAL_PATH)/modules/rockchip-dfi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-dfi.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \

@@ -21,10 +21,16 @@ done
 grep -E '^(I:|N:|H:|B: PROP=)' /proc/bus/input/devices 2>/dev/null | while IFS= read -r iline; do
     printf 'GRU_INPUT %s\n' "$iline" > /dev/kmsg || true
 done
+for net in /sys/class/net/*; do
+    [ -e "$net" ] || continue
+    nmac=$(cat "$net/address" 2>/dev/null)
+    nstate=$(cat "$net/operstate" 2>/dev/null)
+    printf 'GRU_NET %s mac=%s state=%s\n' "$net" "$nmac" "$nstate" > /dev/kmsg || true
+done
 logcat -b crash -b system -b main -f /data/gru-logcat.txt -r 2048 -n 2 \
-    Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:I RenderEngine:I libEGL:I minigbm:I GoogleIIOSensorSubHal:I EventHub:I InputReader:I '*:S' &
+    Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:I RenderEngine:I libEGL:I minigbm:I GoogleIIOSensorSubHal:I EventHub:I InputReader:I WifiService:I WifiNative:I WifiVendorHal:I HalDevMgr:I wificond:I wpa_supplicant:I android.hardware.wifi-service:I WifiHAL:I adbd:I '*:S' &
 logcat -b crash -b system -b main \
-    Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:I RenderEngine:I libEGL:I minigbm:I GoogleIIOSensorSubHal:I EventHub:I InputReader:I '*:S' |
+    Zygote:I AndroidRuntime:E SystemServer:E Watchdog:E ActivityManager:E DEBUG:F libc:F drmhwc:I SurfaceFlinger:I RenderEngine:I libEGL:I minigbm:I GoogleIIOSensorSubHal:I EventHub:I InputReader:I WifiService:I WifiNative:I WifiVendorHal:I HalDevMgr:I wificond:I wpa_supplicant:I android.hardware.wifi-service:I WifiHAL:I adbd:I '*:S' |
 while IFS= read -r line; do
     printf 'GRU_LOG %s\n' "$line" > /dev/kmsg || true
 done

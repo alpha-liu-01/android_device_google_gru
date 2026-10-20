@@ -6,6 +6,7 @@ import /vendor/etc/init/hw/init.mainline.rc
 # DEV_NOT_ENCRYPTABLE, which matches this unencrypted userdata.
 
 on early-init
+    write /sys/module/firmware_class/parameters/path /vendor/firmware
     # Battery stats swaps BPF maps through a PF_KEY socket. That close()
     # calls synchronize_rcu(). CONFIG_NET_KEY=m, so the family is missing
     # until this module is loaded, and the swap then kills system_server.
@@ -28,7 +29,19 @@ on early-init
     insmod /vendor/lib/drm_shmem_helper.ko
     insmod /vendor/lib/gpu-sched.ko
     insmod /vendor/lib/panfrost.ko
-    write /sys/module/firmware_class/parameters/path /vendor/firmware
+    insmod /vendor/lib/rfkill.ko
+    insmod /vendor/lib/libarc4.ko
+    insmod /vendor/lib/arc4.ko
+    insmod /vendor/lib/ccm.ko
+    insmod /vendor/lib/cmac.ko
+    insmod /vendor/lib/aes-ce-cipher.ko
+    insmod /vendor/lib/aes-ce-ccm.ko
+    insmod /vendor/lib/aes-ce-blk.ko
+    insmod /vendor/lib/cfg80211.ko
+    insmod /vendor/lib/mac80211.ko
+    insmod /vendor/lib/ath.ko
+    insmod /vendor/lib/ath10k_core.ko
+    insmod /vendor/lib/ath10k_pci.ko
     # usbdrd_dwc3_0 is dr_mode=host, so there is no UDC. The gadget HAL
     # aborts when sys.usb.controller is empty. init.mainline.usb.rc would
     # otherwise set configfs to 2 and restart that HAL forever.
@@ -102,6 +115,16 @@ on post-fs
     chown system system /sys/bus/iio/devices/iio:device1/scan_elements/in_timestamp_en
     chmod 0660 /sys/bus/iio/devices/iio:device1/scan_elements/in_timestamp_en
 
+on zygote-start
+    mkdir /data/vendor/wifi 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa 0770 wifi wifi
+    mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
+    mkdir /data/vendor/wifi/hostapd 0770 wifi wifi
+    mkdir /data/vendor/wifi/hostapd/sockets 0770 wifi wifi
+
+on boot && property:service.adb.tcp.port=5555
+    start adbd
+
 # Console loglevel 7 would paint kernel warnings back onto the panel if
 # fbcon is still bound. kmsg itself is unchanged.
 on property:sys.boot_completed=1
@@ -114,15 +137,21 @@ on property:sys.boot_completed=1
 on property:init.svc.usbd=running
     stop usbd
 
-# usbdrd_dwc3_0 is host-only, so there is no UDC. adbd still opens functionfs
-# and the kernel prints bcdVersion about once a second.
-on property:init.svc.adbd=running
-    stop adbd
-
 # No Bluetooth controller. The HAL aborts in initializationComplete and on
 # FD_SET(-1), and init keeps restarting it.
 on property:init.svc.vendor.bluetooth-default=running
     stop vendor.bluetooth-default
+
+service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
+                       -O/data/vendor/wifi/wpa/sockets \
+                       -Dnl80211 -g@android:wpa_wlan0
+    interface aidl android.hardware.wifi.supplicant.ISupplicant/default
+    socket wpa_wlan0 dgram 660 wifi wifi
+    group wifi net_raw net_admin
+    class main
+    disabled
+    oneshot
+    user root
 
 # system_server's Java exception never reaches kmsg by itself. The script
 # keeps a copy on /data and mirrors the same lines to kmsg one at a time.

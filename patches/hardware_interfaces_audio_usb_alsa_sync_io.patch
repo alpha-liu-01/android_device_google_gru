@@ -1,0 +1,146 @@
+diff --git a/audio/aidl/default/alsa/StreamAlsa.cpp b/audio/aidl/default/alsa/StreamAlsa.cpp
+index 7a44cc7..eb67f46 100644
+--- a/audio/aidl/default/alsa/StreamAlsa.cpp
++++ b/audio/aidl/default/alsa/StreamAlsa.cpp
+@@ -128,16 +128,18 @@ StreamAlsa::~StreamAlsa() {
+             return ::android::NO_INIT;
+         }
+         alsaDeviceProxies.push_back(std::move(proxy));
+-        auto sink = makeSink(mIsInput);  // Do not block the writer when it is on our thread.
+-        if (sink != nullptr) {
+-            sinks.push_back(sink);
+-        } else {
+-            return ::android::NO_INIT;
+-        }
+-        if (auto source = makeSource(sink.get()); source != nullptr) {
+-            sources.push_back(source);
+-        } else {
+-            return ::android::NO_INIT;
++        if (!device.isExternal) {
++            auto sink = makeSink(mIsInput);  // Do not block the writer when it is on our thread.
++            if (sink != nullptr) {
++                sinks.push_back(sink);
++            } else {
++                return ::android::NO_INIT;
++            }
++            if (auto source = makeSource(sink.get()); source != nullptr) {
++                sources.push_back(source);
++            } else {
++                return ::android::NO_INIT;
++            }
+         }
+     }
+     if (alsaDeviceProxies.empty()) {
+@@ -146,10 +148,12 @@ StreamAlsa::~StreamAlsa() {
+     mAlsaDeviceProxies = std::move(alsaDeviceProxies);
+     mSources = std::move(sources);
+     mSinks = std::move(sinks);
+-    mIoThreadIsRunning = true;
+-    for (size_t i = 0; i < mAlsaDeviceProxies.size(); ++i) {
+-        mIoThreads.emplace_back(mIsInput ? &StreamAlsa::inputIoThread : &StreamAlsa::outputIoThread,
+-                                this, i);
++    if (!mSinks.empty()) {
++        mIoThreadIsRunning = true;
++        for (size_t i = 0; i < mAlsaDeviceProxies.size(); ++i) {
++            mIoThreads.emplace_back(
++                    mIsInput ? &StreamAlsa::inputIoThread : &StreamAlsa::outputIoThread, this, i);
++        }
+     }
+     return ::android::OK;
+ }
+@@ -164,27 +168,52 @@ StreamAlsa::~StreamAlsa() {
+     unsigned maxLatency = 0;
+     if (mIsInput) {
+         const size_t i = 0;  // For the input case, only support a single device.
+-        LOG(VERBOSE) << __func__ << ": reading from sink " << i;
+-        ssize_t framesRead = mSources[i]->read(buffer, frameCount);
+-        LOG_IF(FATAL, framesRead < 0) << "Error reading from the pipe: " << framesRead;
+-        if (ssize_t framesMissing = static_cast<ssize_t>(frameCount) - framesRead;
+-            framesMissing > 0) {
+-            LOG(WARNING) << __func__ << ": incomplete data received, inserting " << framesMissing
+-                         << " frames of silence";
+-            memset(static_cast<char*>(buffer) + framesRead * mFrameSizeBytes, 0,
+-                   framesMissing * mFrameSizeBytes);
++        if (mSources.empty()) {
++            if (int ret = proxy_read_with_retries(mAlsaDeviceProxies[i].get(), buffer,
++                                                  bytesToTransfer, mReadWriteRetries);
++                ret != 0) {
++                LOG(WARNING) << __func__ << "[" << i << "]: Error reading from ALSA: " << ret;
++                memset(buffer, 0, bytesToTransfer);
++                static constexpr float kMicrosPerSecond = MICROS_PER_SECOND;
++                const size_t delayUs = static_cast<size_t>(
++                        std::roundf(frameCount * kMicrosPerSecond / mSampleRate));
++                usleep(delayUs);
++            }
++        } else {
++            LOG(VERBOSE) << __func__ << ": reading from sink " << i;
++            ssize_t framesRead = mSources[i]->read(buffer, frameCount);
++            LOG_IF(FATAL, framesRead < 0) << "Error reading from the pipe: " << framesRead;
++            if (ssize_t framesMissing = static_cast<ssize_t>(frameCount) - framesRead;
++                framesMissing > 0) {
++                LOG(WARNING) << __func__ << ": incomplete data received, inserting "
++                             << framesMissing << " frames of silence";
++                memset(static_cast<char*>(buffer) + framesRead * mFrameSizeBytes, 0,
++                       framesMissing * mFrameSizeBytes);
++            }
+         }
+         maxLatency = proxy_get_latency(mAlsaDeviceProxies[i].get());
+     } else {
+         alsa::applyGain(buffer, mGain, bytesToTransfer, mConfig.value().format, mConfig->channels);
+         for (size_t i = 0; i < mAlsaDeviceProxies.size(); ++i) {
+-            LOG(VERBOSE) << __func__ << ": writing into sink " << i;
+-            ssize_t framesWritten = mSinks[i]->write(buffer, frameCount);
+-            LOG_IF(FATAL, framesWritten < 0) << "Error writing into the pipe: " << framesWritten;
+-            if (ssize_t framesLost = static_cast<ssize_t>(frameCount) - framesWritten;
+-                framesLost > 0) {
+-                LOG(WARNING) << __func__ << ": sink " << i << " incomplete data sent, dropping "
+-                             << framesLost << " frames";
++            if (mSinks.empty()) {
++                if (int ret = proxy_write_with_retries(mAlsaDeviceProxies[i].get(), buffer,
++                                                       bytesToTransfer, mReadWriteRetries);
++                    ret != 0) {
++                    LOG(WARNING) << __func__ << "[" << i << "]: Error writing into ALSA: " << ret;
++                    static constexpr float kMicrosPerSecond = MICROS_PER_SECOND;
++                    const size_t delayUs = static_cast<size_t>(
++                            std::roundf(frameCount * kMicrosPerSecond / mSampleRate));
++                    usleep(delayUs);
++                }
++            } else {
++                LOG(VERBOSE) << __func__ << ": writing into sink " << i;
++                ssize_t framesWritten = mSinks[i]->write(buffer, frameCount);
++                LOG_IF(FATAL, framesWritten < 0) << "Error writing into the pipe: " << framesWritten;
++                if (ssize_t framesLost = static_cast<ssize_t>(frameCount) - framesWritten;
++                    framesLost > 0) {
++                    LOG(WARNING) << __func__ << ": sink " << i << " incomplete data sent, dropping "
++                                 << framesLost << " frames";
++                }
+             }
+             maxLatency = std::max(maxLatency, proxy_get_latency(mAlsaDeviceProxies[i].get()));
+         }
+diff --git a/audio/aidl/default/alsa/Utils.cpp b/audio/aidl/default/alsa/Utils.cpp
+index 77e4f65..0701a06 100644
+--- a/audio/aidl/default/alsa/Utils.cpp
++++ b/audio/aidl/default/alsa/Utils.cpp
+@@ -415,6 +415,9 @@ DeviceProxy readAlsaDeviceInfo(const DeviceProfile& deviceProfile) {
+         LOG(ERROR) << __func__ << ": unable to read device info, device address=" << deviceProfile;
+         return DeviceProxy();
+     }
++    if (proxy.getProfile()->default_config.period_count < DEFAULT_PERIOD_COUNT) {
++        proxy.getProfile()->default_config.period_count = DEFAULT_PERIOD_COUNT;
++    }
+     return proxy;
+ }
+ 
+diff --git a/audio/aidl/default/usb/StreamUsb.cpp b/audio/aidl/default/usb/StreamUsb.cpp
+index 9b10432..b542f2e 100644
+--- a/audio/aidl/default/usb/StreamUsb.cpp
++++ b/audio/aidl/default/usb/StreamUsb.cpp
+@@ -33,7 +33,7 @@ using aidl::android::media::audio::common::MicrophoneInfo;
+ namespace aidl::android::hardware::audio::core {
+ 
+ StreamUsb::StreamUsb(StreamContext* context, const Metadata& metadata)
+-    : StreamAlsa(context, metadata, 1 /*readWriteRetries*/) {}
++    : StreamAlsa(context, metadata, 3 /*readWriteRetries*/) {}
+ 
+ ndk::ScopedAStatus StreamUsb::setConnectedDevices(
+         const std::vector<AudioDevice>& connectedDevices) {

@@ -347,9 +347,29 @@
      ```
      即可在不重启 `servicemanager` 和 `system_server` 的前提下，让 `servicemanager` 原地重读 `/vendor/etc/vintf/manifest.xml`，成功注册 `android.hardware.audio.core.IModule/usb` 并让 `audioserver` 加载 `"usb"` 硬件模块（Handle 18）。
 
+3. **修复 USB DAC 播放爆音 / 爆电平杂音（`AHAL_StreamAlsa` 非阻塞 `MonoPipe` 溢出丢帧）**：
+   - **实机现象与日志定位**：
+     - 插入两款不同规格的 Type-C DAC（`NICEHCK HiFi Audio` `192kHz/32-bit` 与 `Generic EarPods` `48kHz/16-bit`）后虽能正常出声，但即使在低音量下也持续伴随「爆电平」一样的噼啪杂音。
+     - 抓取实机 `logcat` 发现播放期间 `AHAL_StreamAlsa` 每隔数毫秒即刷屏报错：
+       - 192kHz DAC（`mBufferSizeFrames = 1024`）：`W AHAL_StreamAlsa: transfer: sink 0 incomplete data sent, dropping 1024 frames`
+       - 48kHz DAC（`mBufferSizeFrames = 240`，`MonoPipe` 2 的幂次向上取整为 `256` 帧）：`W AHAL_StreamAlsa: transfer: sink 0 incomplete data sent, dropping 224 frames` 及 `dropping 240 frames`。
+   - **根因链路**：
+     1. `ModuleUsb` 未重载 `getNominalLatencyMs()`，使用默认 `kLatencyMs = 5`（1 个 ALSA period = 5ms，48kHz 下 `mFrameCount = 240` 帧）。
+     2. 在 `AudioFlinger`（`frameworks/av/services/audioflinger/Threads.cpp:3280`）中，`usb_device output` 属于普通 `MixerThread`（无 `FAST` 标志），`AudioFlinger` 强制要求混音缓冲不少于 `kMinNormalSinkBufferSizeMs`（20ms），因此 `mNormalFrameCount = 4 * mFrameCount`（960 帧 @ 48kHz，4096 帧 @ 192kHz）。每次混音周期结束后，`MixerThread` 会以 `mSleepTimeUs = 0` **连续 4 次**调用 `threadLoop_write()` -> `StreamHalAidl::transfer()`，每次通过 `DataMQ` 发送 1 个 period（240 帧），并依赖底层 HAL 的 `transfer()` 按照硬件 1x 采样率时钟阻塞节流。
+     3. 然而在 AOSP 参考实现 `hardware/interfaces/audio/aidl/default/alsa/StreamAlsa.cpp` 中，`StreamAlsa::start()` 为输出流创建了容量仅 1 个 period（`roundup(240) = 256` 帧）且 **`writeCanBlock = false`（非阻塞）** 的 `MonoPipe`！
+     4. 之所以 `StreamPrimary`（内置扬声器）没暴露此问题，是因为 `StreamPrimary::transfer()`（`StreamPrimary.cpp:110`）专门为模拟器写了 `usleep(sleepTimeUs)` 软件延时节流；而 **`StreamUsb::transfer()`（`StreamUsb.cpp:61`）没有任何 `usleep` 节流**，直接调用 `StreamAlsa::transfer()` 向非阻塞 `MonoPipe` 写入并耗时 0 微秒立即返回！
+     5. 结果：`MixerThread` 在 50 微秒内连续打入 4 个 240 帧的 burst，第 1 个 burst 写入 240 帧后 `MonoPipe` 仅剩 `256 - 240 = 16` 帧空间，第 2 个 burst 仅截断写入 16 帧并直接丢弃剩余 **224 帧**，第 3、4 个 burst 直接丢弃全部 **240 帧**！音频正弦波每隔几毫秒就被强行截断拼接 16 帧残片，在波形上产生垂直阶跃不连续（高频冲激），听感上就是无论音量多小都存在密集的「爆电平」劈啪杂音。
+     6. 此外，`libalsautilsv2` 的 `read_alsa_device_config()` 将 USB 声卡 `period_count` 设为了 `pcm_params_get_min(..., PCM_PARAM_PERIODS) = 2`（总缓冲仅 `2 * 5ms = 10ms`，小于 `MixerThread` 20ms 混音周期），且 `StreamUsb` 的 `readWriteRetries` 仅为 `1`。
+   - **修复方案（补丁已保存至 `patches/hardware_interfaces_audio_usb_alsa_sync_io.patch`）**：
+     1. **`StreamAlsa.cpp`**：当 `device.isExternal == true`（外部 USB 声卡）时，不再创建 `MonoPipe` 和 `outputIoThread`/`inputIoThread` 中转线程，而是在 HAL 实时 worker 线程的 `StreamAlsa::transfer()` 中直接调用 `proxy_write_with_retries()` / `proxy_read_with_retries()` 进行同步阻塞 ALSA 读写。这样每次 `burst` 直接由内核 `snd-usb-audio` 的硬件等时 URB 完成时钟精准节流（0 丢帧、0 线程竞争），同时保持内置扬声器（`!device.isExternal`）原有路径完全不变。
+     2. **`alsa/Utils.cpp`**：在 `readAlsaDeviceInfo()` 中确保 `default_config.period_count` 至少为 `DEFAULT_PERIOD_COUNT`（`4`，即 `4 * 5ms = 20ms` 环形缓冲），与 `AudioFlinger` 的 20ms `mNormalFrameCount` 混音周期对齐。
+     3. **`usb/StreamUsb.cpp`**：将 `readWriteRetries` 从 `1` 提升至 `3`。
+     4. 重新编译 `/apex/com.android.hardware.audio/bin/hw/android.hardware.audio.service-aidl.example` 并通过 `mount --bind` 热替换至实机。
+
 ## 事件
 
 | 日期 | 事件记录 |
 | :--- | :--- |
 | 2026-10-20 | 完成 USB-C 全功能诊断与四步修复规划文档 `docs/usb.md`。 |
 | 2026-10-20 | 完成第一步（USB-C 音频）代码修改并通过 `touch /apex/apex-info-list.xml` 在实机免重启热加载 `snd-usb-audio.ko`、`IModule/usb` 与 `usb_audio_policy_configuration.xml`，进入人工插拔 DAC 声卡测试阶段。 |
+| 2026-10-20 | 定位并修复 USB-C DAC 播放爆电平杂音（`AHAL_StreamAlsa` 非阻塞 `MonoPipe` 溢出每秒丢弃数千帧），重编 `android.hardware.audio.service-aidl.example` 并热挂载至实机。 |

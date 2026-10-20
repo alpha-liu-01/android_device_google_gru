@@ -1,0 +1,14 @@
+diff --git a/src/android/net/ip/IpClientLinkObserver.java b/src/android/net/ip/IpClientLinkObserver.java
+index 386dd00..f9e6580 100644
+--- a/src/android/net/ip/IpClientLinkObserver.java
++++ b/src/android/net/ip/IpClientLinkObserver.java
+@@ -406,7 +406,8 @@ public class IpClientLinkObserver {
+ 
+     private void setIfindex(int ifindex) {
+         if (!mNetlinkMonitor.isRunning()) {
+-            Log.wtf(mTag, "NetlinkMonitor is not running when setting interface parameter!");
++            Log.wtf(mTag, "NetlinkMonitor is not running when setting interface parameter! Restarting.");
++            mNetlinkMonitor.start();
+         }
+         mIfindex = ifindex;
+     }

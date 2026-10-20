@@ -1,0 +1,23 @@
+diff --git a/staticlibs/device/com/android/net/module/util/ip/NetlinkMonitor.java b/staticlibs/device/com/android/net/module/util/ip/NetlinkMonitor.java
+index b4309e7..bb56aa4 100644
+--- a/staticlibs/device/com/android/net/module/util/ip/NetlinkMonitor.java
++++ b/staticlibs/device/com/android/net/module/util/ip/NetlinkMonitor.java
+@@ -17,6 +17,7 @@
+ package com.android.net.module.util.ip;
+ 
+ import static android.system.OsConstants.AF_NETLINK;
++import static android.system.OsConstants.EINVAL;
+ import static android.system.OsConstants.ENOBUFS;
+ import static android.system.OsConstants.SOCK_DGRAM;
+ import static android.system.OsConstants.SOCK_NONBLOCK;
+@@ -195,8 +196,8 @@ public class NetlinkMonitor extends PacketReader {
+     @Override
+     protected boolean handleReadError(ErrnoException e) {
+         logError("readPacket error: ", e);
+-        if (e.errno == ENOBUFS) {
+-            Log.wtf(mTag, "Errno: ENOBUFS");
++        if (e.errno == ENOBUFS || e.errno == EINVAL) {
++            Log.wtf(mTag, "Errno: " + e.errno);
+             return false;
+         }
+         return true;

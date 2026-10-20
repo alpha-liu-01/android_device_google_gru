@@ -28,6 +28,10 @@ $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
 $(call inherit-product, $(SRC_TARGET_DIR)/product/full_base.mk)
 $(call inherit-product, device/mainline/common/mainline_common.mk)
 
+DEVICE_PACKAGE_OVERLAYS := \
+    $(LOCAL_PATH)/overlay \
+    $(DEVICE_PACKAGE_OVERLAYS)
+
 PRODUCT_USE_DYNAMIC_PARTITIONS := true
 PRODUCT_SHIPPING_API_LEVEL := 36
 PRODUCT_OTA_ENFORCE_VINTF_KERNEL_REQUIREMENTS := false
@@ -41,7 +45,8 @@ PRODUCT_CHARACTERISTICS := tablet
 PRODUCT_PRODUCT_PROPERTIES += \
     ro.adb.secure=0 \
     ro.sf.lcd_density=260 \
-    persist.sys.usb.config=adb
+    persist.sys.usb.config=adb \
+    sys.brightness.disable_gamma_conversion=true
 
 PRODUCT_VENDOR_PROPERTIES += \
     persist.sys.zram_enabled=1 \
@@ -60,8 +65,10 @@ PRODUCT_PACKAGES += \
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/etc/sensors/hals.conf:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/hals.conf \
     $(LOCAL_PATH)/etc/sensors/sensor_hal_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/sensor_hal_configuration.xml \
+    $(LOCAL_PATH)/idc/Elan_Touchscreen.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Elan_Touchscreen.idc \
     $(LOCAL_PATH)/idc/Vendor_04f3_Product_0b03.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Vendor_04f3_Product_0b03.idc \
-    $(LOCAL_PATH)/idc/Vendor_2d1f_Product_0036.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Vendor_2d1f_Product_0036.idc
+    $(LOCAL_PATH)/idc/Vendor_2d1f_Product_0036.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Vendor_2d1f_Product_0036.idc \
+    $(LOCAL_PATH)/keylayout/cros_ec.kl:$(TARGET_COPY_OUT_VENDOR)/usr/keylayout/cros_ec.kl
 
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/etc/permissions/android.software.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.xml \

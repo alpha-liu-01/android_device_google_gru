@@ -119,6 +119,47 @@
      - 添加 `/vendor/etc/ueventd.gru.rc` 并在 `init.gru.rc` `on post-fs` 双重设置 `/dev/iio:device0..1` 与 `/sys/bus/iio/devices/iio:device0..1` 下 `buffer/*`、`sampling_frequency`、`scan_elements/*_en` 的 `0660 system system` 权限；补齐 `android.hardware.sensor.accelerometer.xml` 与 `android.hardware.sensor.gyroscope.xml` 权限声明。
 - **构建产物**：
   - `out/target/product/gru/super.img` 大小 `1249505684` 字节，sha256 `1e240695d3c4ef4e60755942ae2d0d75095c6a8d4236b4d286caa87662656ab4`。
+- **实机验证与日志对照分析（`/tmp/bootlog21.txt`，8231 行）**：
+  - **启动耗时与调频复核**：`surfaceflinger` 在 `72.90s` 启动，`sys.boot_completed=1` 在 `124.53s` 完成（比上一轮 `125.21s` 再快 0.68 秒）；`GRU_FREQ` 确认小核 `1.512 GHz`、大核 `2.016 GHz`、GPU `800 MHz`、内存控制器 `cur=928000000 max=928000000` 全程生效；内置盘 eMMC `mmcblk1p1` 校验和保持 `5c188eeb7a89fdb1bf442ccccd61a556ad5e232149454659853e7dee98f0068a`。
+  - **本轮验证通过的 3 项功能**：
+    1. **Wacom 手写笔（`hid-over-i2c 2D1F:0036 Stylus`）**：`7.45s` `i2c-hid-of` 探测成功并注册 `/dev/input/event3`（`Stylus`）与 `/dev/input/event4`，`EventHub` 加载 `/vendor/usr/idc/Vendor_2d1f_Product_0036.idc` 并绑定至 `display id 0`（`mode DIRECT`）。实测全部 4 个方向点击与悬停（Hover）完全正常，无任何方向错位（手写与压感暂缺测试软件条件）。同时 `gpio_keys.ko` 成功注册 `/dev/input/event5`（`SW_PEN_INSERTED`）。
+    2. **自动旋转与四向帧率一致性**：`74.3s` `GoogleIIOSensorSubHal` 成功发现并初始化 `/sys/bus/iio/devices/iio:device0`（`cros-ec-accel`）与 `iio:device1`（`cros-ec-gyro`）。实测自动旋转完全正常，且全部 4 个方向的帧率一致，**未出现** Debian XFCE 下横屏远比竖屏卡顿的问题（原因：Debian XFCE 下 Xorg 使用 CPU 软旋转，而 Android 下当 `rockchip` VOP 硬件平面不支持 90°/270° 时，`drm_hwcomposer` 自动回退由 `Mali-T860 (Panfrost)` 在 GPU 硬件合成阶段直接完成旋转纹理渲染）。
+    3. **「设置 -> 存储」（`fuse.ko`）**：`7.26s` `fuse: init (API version 7.39)` 初始化成功，`external_primary`（`/storage/emulated/0`）正常挂载，「设置 -> 存储」打开完全正常，上一轮的 `Volume external_primary not found` 异常彻底消失。
+  - **本轮实测新发现的问题与 `bootlog21.txt` 根因定位及修复排期**：
+    1. **缺少虚拟导航栏（三键导航 / 手势导航均不显示，且设置中无入口或打不开）**：
+       - **根因**：`device/google/gru` 尚未像 `third_party/android_device_google_trogdor-lineage-24` 一样配置 `DEVICE_PACKAGE_OVERLAYS := $(LOCAL_PATH)/overlay`。AOSP 默认 `config_showNavigationBar = false`（假定机身带实体 Home/Back 按键），导致 `WindowManagerService.hasNavigationBar()` 返回 `false`，`SystemUI` 不渲染导航栏，且「设置 -> 系统 -> 导航模式」隐藏入口。
+       - **修复排期**：**放入第 4 步（背光调节）一并修复**——参照 Trogdor 补齐 `device/google/gru/overlay/frameworks/base/core/res/res/values/config.xml`（开启 `<bool name="config_showNavigationBar">true</bool>`，并声明 `config_voice_capable=false`、`config_sms_capable=false`）。
+    2. **点击搜索框时屏幕虚拟键盘（IME）不弹出**：
+       - **根因（见 `bootlog21.txt` 第 6550 行）**：`rk3399-gru.dtsi` 默认 `#include <arm/cros-ec-keyboard.dtsi>`（`compatible = "google,cros-ec-keyb"`，含完整笔记本 8×13 矩阵键盘映射），而纯平板 `rk3399-gru-scarlet.dtsi` 未将其覆写为仅按键的 `google,cros-ec-keyb-switches`。因此 `cros_ec_keyb.ko` 除了注册音量/电源键的 `cros_ec_buttons`（`/dev/input/event2`）外，还额外注册了一个名为 `cros_ec`（`/dev/input/event1`）的全尺寸键盘设备；`EventHub` 检测到其包含 `AKEYCODE_Q` 且 `builtinKeyboard=false`，将其归类为外接全键盘（`classes=KEYBOARD | ALPHAKEY`），Android 默认在外接硬键盘连接时隐藏屏幕软键盘（`show_ime_with_hard_keyboard=0`）。
+       - **修复排期**：**放入第 4 步（背光调节）一并修复**——① 新增 `/vendor/usr/keylayout/cros_ec.kl`（仅保留功能键、不映射字母键 `Q`，使 `EventHub` 不把 `cros_ec` 虚报为外接 `ALPHAKEY` 硬键盘）；② 同时在 `overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml` 中配置 `<bool name="def_show_ime_with_hard_keyboard">true</bool>`（并在 `init.gru.rc` `on property:sys.boot_completed=1` 执行 `settings put secure show_ime_with_hard_keyboard 1` 以覆盖旧 `userdata`），即使未来真接上实体键盘也默认允许弹出软键盘。
+    3. **「设置 -> 声音」与「设置 -> 无障碍（Accessibility）」闪退**：
+       - **根因（见 `bootlog21.txt` 第 7572 行与第 7868 行）**：两处崩溃均由「系统尚未声明蓝牙支持（`android.hardware.bluetooth`），导致 `LocalBluetoothManager.getInstance()` 返回 `null`」引发：
+         - 打开「设置 -> 声音」时：`LocalMediaManager` 构造函数（`LocalMediaManager.java:160`）发现 `mLocalBluetoothManager == null` 后打印 `Bluetooth is not supported on this device` 并提前 `return`，导致成员变量 `mInfoMediaManager` 保持 `null`；随后 `MediaOutputPreferenceController.onStart()` 调用 `LocalMediaManager.registerCallback()` 时触发 `mInfoMediaManager.registerCallback()` 空指针（NPE）。
+         - 打开「设置 -> 无障碍」时：因未启用蓝牙助听器支持，`use(AccessibilityHearingAidPreferenceController.class)` 返回 `null`，`AccessibilitySettings.onAttach(AccessibilitySettings.java:196)` 直接调用 `.setFragmentManager()` 触发空指针（NPE）。
+       - **与 `docs/phase-3.md` 蓝牙无法开机记录的核对与安全修复方案**：
+         - 核对 [阶段 3](phase-3.md) 第 148～159 行记录可知：在阶段 3 中，`init.gru.rc` 曾执行 `pm disable com.android.bluetooth`，并将该禁用状态持久化写入了外置盘 `userdata`（`/data/system/users/0/package-restrictions.xml`）；而在我们未格式化的同一份 `userdata` 上，若此时在第 4 步贸然恢复 `/vendor/etc/permissions/android.hardware.bluetooth.xml` 权限声明，`SystemServer` 启动 `BluetoothService` 时就会立即重现阶段 3 第 157 行的致命异常 `No service can handle intent { act=android.bluetooth.IAdapter pkg=com.android.bluetooth }`，再次导致 `system_server` 崩溃无法开机！（且在未放入 `btusb.ko` 前恢复蓝牙 HAL 也会重现 `FD_SET: file descriptor -1` 反复 abort。）
+         - **100% 零风险修复**：在第 4 步中**绝不提前开启** `android.hardware.bluetooth` 声明（保持 `TARGET_BLUETOOTH_HAL := none` 直至第 6 步蓝牙硬件模块就绪，且第 6 步开启前必须先在 `init.gru.rc` 执行 `pm enable com.android.bluetooth`），而是直接在 `SettingsLib`（`LocalMediaManager.java`）和 `Settings`（`AccessibilitySettings.java`、`AccessibilityHearingAidPreferenceController.java`、`HearingAidHelper.java`）中补齐对 `mInfoMediaManager` / `hearingAidPreferenceController` / `mLocalBluetoothManager` / `mBluetoothAdapter` 的空指针保护。这样既彻底消除了「设置 -> 声音」与「设置 -> 无障碍」的闪退，又从根源上保证 0% 概率触发阶段 3 的蓝牙死循环。
+  - **日志中未在表面显现的隐性问题排查（`bootlog21.txt`）**：
+    1. **`Elan Touchscreen` 的 IDC 文件名匹配（第 2187、6546 行）**：`6.6.34-phase2` 的 `elants_i2c` 驱动上报 `Vendor=0000 Product=0000`、`Name="Elan Touchscreen"`，因此 `EventHub` 未匹配按 VID/PID 命名的 `Vendor_04f3_Product_0b03.idc`（日志显示 `configuration=''`），而是靠内置启发式规则识别为 `TOUCH | TOUCH_MT`。在第 4 步中增加按设备名匹配的 `/vendor/usr/idc/Elan_Touchscreen.idc` 以确保显式加载 IDC。
+    2. **横屏/倒置时 `drmhwc: Failed to create DrmKmsPlan`（第 7886、7920、7937 行）**：仅在屏幕处于 90°/180°/270° 旋转方向且有界面刷新时打印。这是因为 `rockchip` VOP 硬件图层仅暴露 `DRM_MODE_ROTATE_0`，`drm_hwcomposer` 尝试为旋转后的图层建立硬件 KMS plane 计划失败后，按设计安全回退给 `SurfaceFlinger`（Panfrost GPU）合成，属于正常回退日志，不影响稳定性或帧率。
+    3. **`BpfLoader-rs: Failed to read fuse prog type`（第 1950 行）**：主线 `6.6.34` 内核不包含 Android common kernel 私有的 `CONFIG_FUSE_BPF` 补丁，因此 `fuse` 自动走标准内核 FUSE 通道，功能完全正常。
+
+### 4. 背光曲线校正与第 3 步遗留 UI 修复（2026-10-19）
+
+- **背光手动调节现状与指数曲线根因定位**：
+  - `device/mainline/common` 自带的 `vendor.light-default`（`hardware/lineage/interfaces/light`）已默认运行并控制 `/sys/class/backlight/backlight/brightness`（`max_brightness = 4095`），下拉菜单亮度滑块手动调节本身已打通；Scarlet 机身无环境光传感器（ALS），自动亮度在硬件上不支持，直接跳过。
+  - **为什么亮度滑块只有后一小段才明显变亮（双重非线性/指数叠加）**：
+    1. 在内核设备树 `rk3399-gru-scarlet.dtsi` 中，`backlight`（`pwm-backlight`）未定义 `brightness-levels` 数组。内核驱动 `drivers/video/backlight/pwm_bl.c` 的 `pwm_backlight_brightness_default()` 因此自动按 **CIE 1931 三次方感知曲线**（`retval *= retval * retval`）生成了 4096 级查找表——也就是说，内核暴露的 `/sys/class/backlight/backlight/brightness`（`0..4095`）本身**已经是人眼感知线性的**（例如滑到 50% 即 `2048` 时，内核对应的物理 PWM 占空比约为 \(0.5^3 = 12.5\%\)）。
+    2. 然而 Android 的 `BrightnessUtils`（`com.android.settingslib.display.BrightnessUtils` 与 `com.android.internal.display.BrightnessUtils`）假定底层背光值是物理线性的，默认在滑块上又叠加了一层 **Hybrid Log Gamma (HLG) 指数曲线**（`MathUtils.exp((normalizedVal - C) / A) + B`）：当滑块在 50% 时，Android 只向内核输出约 `8.3%`（`340 / 4095`），再经内核 CIE 三次方后物理占空比仅剩 **0.14%**（`6 / 4095`）；即使滑到 75%，物理占空比也仅有 **2.3%**，直到最后 25% 才陡然升亮。
+  - **校正方案**：
+    - `com.android.settingslib.display.BrightnessUtils` 原生预留了系统属性开关 `sys.brightness.disable_gamma_conversion`（当设为 `true` 时，`convertGammaToLinearFloat` 与 `convertLinearToGammaFloat` 直接使用线性插值 `MathUtils.lerp`）。
+    - 同步在 `frameworks/base/core/java/com/android/internal/display/BrightnessUtils.java`（供 `system_server` `RampAnimator` 亮度过渡动画使用）中接入同一个 `sys.brightness.disable_gamma_conversion` 开关，并在 `device/google/gru/device.mk` 与 `init.gru.rc` 中设置 `sys.brightness.disable_gamma_conversion=true`，消除双重 Gamma 叠加，使下拉菜单亮度滑块直接线性映射到内核的 CIE 1931 感知曲线。
+- **同轮一并执行的 3 项修复**：
+  1. **虚拟导航栏（三键导航 / 手势导航）与设备 Overlay**：在 `device.mk` 启用 `DEVICE_PACKAGE_OVERLAYS := $(LOCAL_PATH)/overlay`，新增 `overlay/frameworks/base/core/res/res/values/config.xml`（开启 `config_showNavigationBar=true`，设 `config_voice_capable=false`、`config_sms_capable=false`）与 `overlay/frameworks/base/packages/SettingsProvider/res/values/defaults.xml`（`def_auto_time_zone=false`、`def_accelerometer_rotation=true`、`def_show_ime_with_hard_keyboard=true`）。
+  2. **屏幕虚拟键盘（IME）自动弹出与触摸屏 IDC 显式匹配**：新增 `device/google/gru/keylayout/cros_ec.kl`（拷入 `/vendor/usr/keylayout/cros_ec.kl`），仅映射 `VOLUME_DOWN`、`VOLUME_UP`、`POWER` 而不映射字母键，使 `EventHub` 将 `cros_ec` 识别为纯按键（不再带 `ALPHAKEY` 外接硬键盘标志），并配合 `init.gru.rc` 的 `settings put secure show_ime_with_hard_keyboard 1` 恢复点击输入框弹出软键盘；同时新增 `/vendor/usr/idc/Elan_Touchscreen.idc` 按设备名显式匹配触摸屏。
+  3. **「设置 -> 声音」与「设置 -> 无障碍」空指针修复（不触碰蓝牙开关）**：在 `LocalMediaManager.java`、`AccessibilitySettings.java`、`AccessibilityHearingAidPreferenceController.java` 与 `HearingAidHelper.java` 中加入空指针判空，在不开启 `android.hardware.bluetooth` 的前提下彻底修复两处设置页崩溃。
+- **构建产物**：
+  - `out/target/product/gru/super.img` 大小 `1249522068` 字节，sha256 `0d9351346989a5326707f5fb777c5c34a04c1c01ebae156badbb682e6f5e5146`，已上传至 `10.0.0.133:/home/user/phase3/super.img` 并校验一致。
 
 ## 事件
 
@@ -128,3 +169,5 @@
 | 2026-10-19 | 阶段 4 第 2 项验证通过：写入 `super.img`（`345ebd9a...`）后启动外置盘，`panfrost` 驱动与 Mesa 25.3.3 `Mali-T860 (Panfrost)` OpenGL ES 3.1 硬件加速正常启用，无软渲染回退，`SurfaceFlinger` 至开机完成耗时从 145.7 秒缩短至 64.4 秒，0 次崩溃/ANR。 |
 | 2026-10-19 | 补齐 CPU/内存调频模块（`cpufreq-dt.ko`、`rockchip_thermal.ko`、`rockchip-dfi.ko`、`rk3399_dmc.ko`）并写入 `super.img`（`04155eb4...`）验证通过：`GRU_FREQ` 确认小核 `1.512 GHz`、大核 `2.016 GHz`、GPU `800 MHz`、内存控制器 `928 MHz` 全部上线，总开机时间从 156.9 秒进一步缩短至 125.2 秒，响应速度明显提升，确认 2048×1536 线性合成下 30–45 fps 为 Mali-T860 MP4 硬件带宽边界。 |
 | 2026-10-19 | 完成阶段 4 第 3 项（触摸、旋转、Wacom 手写笔）及 `fuse.ko` 构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `1e240695d3c4ef4e60755942ae2d0d75095c6a8d4236b4d286caa87662656ab4`（`1249505684` 字节），包含 `fuse.ko`、`i2c-hid` 手写笔模块、`cros_ec_sensors` IIO 传感器模块、`android.hardware.sensors@2.1-gru-subhal` 与触摸/手写笔 IDC 配置。 |
+| 2026-10-19 | 阶段 4 第 3 项实机验证通过（`bootlog21.txt`）：Wacom 手写笔四个方向点击与悬停全部正常、自动旋转四个方向流畅且帧率一致、「设置 -> 存储」正常打开；同时定位了缺少虚拟导航栏、软键盘不弹出、「设置 -> 声音 / 无障碍」因缺蓝牙声明触发 NPE 等问题，排入第 4 步（背光调节）一并修复。 |
+| 2026-10-19 | 完成阶段 4 第 4 项（背光滑块线性化校正、虚拟导航栏 Overlay、软键盘 `cros_ec.kl` 修复、「设置 -> 声音 / 无障碍」NPE 修复）构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `0d9351346989a5326707f5fb777c5c34a04c1c01ebae156badbb682e6f5e5146`（`1249522068` 字节）。 |

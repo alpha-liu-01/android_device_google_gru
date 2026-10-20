@@ -1,0 +1,17 @@
+#
+# Copyright (C) 2026 The LineageOS Project
+#
+# rk3399-gru.dtsi includes cros-ec-keyboard.dtsi (google,cros-ec-keyb), which
+# registers an input device named "cros_ec" even on Scarlet (a pure tablet with
+# no physical matrix keyboard). Without a device-specific keylayout, EventHub
+# falls back to Generic.kl, sees KEY_Q (key 16 -> AKEYCODE_Q), and classifies
+# "cros_ec" as an external ALPHAKEY physical keyboard, suppressing the
+# on-screen soft keyboard (IME).
+#
+# Map only non-alphabetic power/volume keys here so EventHub classifies
+# "cros_ec" as KEYBOARD without ALPHAKEY.
+#
+
+key 114   VOLUME_DOWN
+key 115   VOLUME_UP
+key 116   POWER

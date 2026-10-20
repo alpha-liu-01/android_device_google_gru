@@ -38,6 +38,10 @@ on early-init
     setprop sys.use_memfd true
     setprop debug.renderengine.backend skiaglthreaded
     setprop debug.hwui.renderer skiagl
+    # pwm_bl.c generates a 4096-step CIE 1931 cubic curve when DT omits
+    # brightness-levels, so /sys/class/backlight/backlight/brightness is
+    # already perceptually linear. Skip Android's second HLG gamma curve.
+    setprop sys.brightness.disable_gamma_conversion true
     # bootanim holds several cores on SwiftShader and SystemUI then misses
     # its startup deadline. The animation is not what this panel shows.
     setprop debug.sf.nobootanimation 1
@@ -102,6 +106,7 @@ on post-fs
 # fbcon is still bound. kmsg itself is unchanged.
 on property:sys.boot_completed=1
     exec_background - root root -- /system/bin/settings put system screen_off_timeout 86400000
+    exec_background - root root -- /system/bin/settings put secure show_ime_with_hard_keyboard 1
     write /proc/sys/kernel/printk "3 4 1 3"
 
 # usbd only talks to IUsbGadget. With configfs left at 0 that service is

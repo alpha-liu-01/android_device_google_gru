@@ -10,6 +10,19 @@ on early-init
     # calls synchronize_rcu(). CONFIG_NET_KEY=m, so the family is missing
     # until this module is loaded, and the swap then kills system_server.
     insmod /vendor/lib/af_key.ko
+    insmod /vendor/lib/fuse.ko
+    insmod /vendor/lib/rockchip_thermal.ko
+    insmod /vendor/lib/cpufreq-dt.ko
+    insmod /vendor/lib/rockchip-dfi.ko
+    insmod /vendor/lib/rk3399_dmc.ko
+    insmod /vendor/lib/i2c-hid.ko
+    insmod /vendor/lib/i2c-hid-of.ko
+    insmod /vendor/lib/gpio_keys.ko
+    insmod /vendor/lib/kfifo_buf.ko
+    insmod /vendor/lib/industrialio-triggered-buffer.ko
+    insmod /vendor/lib/cros-ec-sensorhub.ko
+    insmod /vendor/lib/cros_ec_sensors_core.ko
+    insmod /vendor/lib/cros_ec_sensors.ko
     insmod /vendor/lib/lz4.ko
     insmod /vendor/lib/zram.ko
     insmod /vendor/lib/drm_shmem_helper.ko
@@ -48,6 +61,42 @@ on post-fs
     chmod 000 /sys/power/state
     write /sys/class/vtconsole/vtcon0/bind 0
     write /sys/class/vtconsole/vtcon1/bind 0
+    chown system system /dev/iio:device0
+    chmod 0660 /dev/iio:device0
+    chown system system /sys/bus/iio/devices/iio:device0/buffer/enable
+    chmod 0660 /sys/bus/iio/devices/iio:device0/buffer/enable
+    chown system system /sys/bus/iio/devices/iio:device0/buffer/length
+    chmod 0660 /sys/bus/iio/devices/iio:device0/buffer/length
+    chown system system /sys/bus/iio/devices/iio:device0/buffer/hwfifo_timeout
+    chmod 0660 /sys/bus/iio/devices/iio:device0/buffer/hwfifo_timeout
+    chown system system /sys/bus/iio/devices/iio:device0/sampling_frequency
+    chmod 0660 /sys/bus/iio/devices/iio:device0/sampling_frequency
+    chown system system /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_x_en
+    chmod 0660 /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_x_en
+    chown system system /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_y_en
+    chmod 0660 /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_y_en
+    chown system system /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_z_en
+    chmod 0660 /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_z_en
+    chown system system /sys/bus/iio/devices/iio:device0/scan_elements/in_timestamp_en
+    chmod 0660 /sys/bus/iio/devices/iio:device0/scan_elements/in_timestamp_en
+    chown system system /dev/iio:device1
+    chmod 0660 /dev/iio:device1
+    chown system system /sys/bus/iio/devices/iio:device1/buffer/enable
+    chmod 0660 /sys/bus/iio/devices/iio:device1/buffer/enable
+    chown system system /sys/bus/iio/devices/iio:device1/buffer/length
+    chmod 0660 /sys/bus/iio/devices/iio:device1/buffer/length
+    chown system system /sys/bus/iio/devices/iio:device1/buffer/hwfifo_timeout
+    chmod 0660 /sys/bus/iio/devices/iio:device1/buffer/hwfifo_timeout
+    chown system system /sys/bus/iio/devices/iio:device1/sampling_frequency
+    chmod 0660 /sys/bus/iio/devices/iio:device1/sampling_frequency
+    chown system system /sys/bus/iio/devices/iio:device1/scan_elements/in_anglvel_x_en
+    chmod 0660 /sys/bus/iio/devices/iio:device1/scan_elements/in_anglvel_x_en
+    chown system system /sys/bus/iio/devices/iio:device1/scan_elements/in_anglvel_y_en
+    chmod 0660 /sys/bus/iio/devices/iio:device1/scan_elements/in_anglvel_y_en
+    chown system system /sys/bus/iio/devices/iio:device1/scan_elements/in_anglvel_z_en
+    chmod 0660 /sys/bus/iio/devices/iio:device1/scan_elements/in_anglvel_z_en
+    chown system system /sys/bus/iio/devices/iio:device1/scan_elements/in_timestamp_en
+    chmod 0660 /sys/bus/iio/devices/iio:device1/scan_elements/in_timestamp_en
 
 # Console loglevel 7 would paint kernel warnings back onto the panel if
 # fbcon is still bound. kmsg itself is unchanged.

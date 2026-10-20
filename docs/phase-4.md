@@ -70,7 +70,9 @@
   - 将 `BoardConfig.mk` 和 `device.mk` 的 `TARGET_GRAPHICS` 切换为 `mesa`，设 `TARGET_GRAPHICS_VULKAN := none`（Mali-T860 为 Midgard v5，仅支持 OpenGL ES 3.1，不支持 PanVK）、`BOARD_MESA3D_GALLIUM_DRIVERS := panfrost`、`TARGET_GRAPHICS_ALLOCATOR_HAL := minigbm-upstream`、`TARGET_MINIGBM_PLATFORM := generic`。
   - 关键防坑：`minigbm-upstream` 的 `init_try_nodes()` 默认优先打开 `/dev/dri/renderD128`，且 `drv_get_backend()` 在找不到 `panfrost` 后端时会回退到 `backend_dumb_generic` 并返回成功，导致后续在 `renderD128` 上调用 `DRM_IOCTL_MODE_CREATE_DUMB` 失败。为此在 `device.mk` 设置 `vendor.minigbm.device=/dev/dri/card0` 与 `vendor.hwc.drm.device=/dev/dri/card0`，使 `minigbm-upstream` 和 `drm_hwcomposer` 固定打开 `/dev/dri/card0`（`rockchip`），而 Mesa（`libEGL_mesa.so` + `libgallium_dri.so`）通过 `DRM_NODE_RENDER` 打开 `/dev/dri/renderD128`（`panfrost`）并通过 PRIME dma-buf 导入 `rockchip` 线性 buffer 进行硬件渲染。
   - 设置 `ro.opengles.version=196609`（OpenGL ES 3.1）、`debug.renderengine.backend=skiaglthreaded`、`debug.hwui.renderer=skiagl`、`ro.surface_flinger.supports_background_blur=0`。
-- **构建产物**：`out/target/product/gru/super.img` 大小 `1248559508` 字节，sha256 `345ebd9a63dd4d4ed9cb0faf7d65a2c6dd76c37e4e3dad7ff16768381dacf146`，已上传至 `/home/user/phase3/super.img` 并校验一致。
+- **构建产物**：
+  - 初版（仅 Panfrost）：`out/target/product/gru/super.img` 大小 `1248559508` 字节，sha256 `345ebd9a63dd4d4ed9cb0faf7d65a2c6dd76c37e4e3dad7ff16768381dacf146`。
+  - 补齐调频模块版（含 `cpufreq-dt.ko`、`rockchip_thermal.ko`、`rockchip-dfi.ko`、`rk3399_dmc.ko`）：`out/target/product/gru/super.img` 大小 `1248600468` 字节，sha256 `04155eb44d30f74ba84dfc6f3de15d62add9720afd4e971dd7fabab17755e416`，已上传至 `/home/user/phase3/super.img` 并校验一致。
 - **实机验证与性能分析（`/tmp/bootlog19.txt`，7542 行）**：
   - **内核驱动上线（`9.96s`，`on early-init`）**：`drm_shmem_helper.ko`、`gpu-sched.ko`、`panfrost.ko` 按序加载成功，`panfrost ff9a0000.gpu: mali-t860 id 0x860 major 0x2 minor 0x0 status 0x0`、`shader_present=0xf l2_present=0x1`（4 核 Mali-T860 MP4 全部就绪，初始频率 500 MHz，OPP 表上限 800 MHz），注册为 `minor 1`（`/dev/dri/renderD128` 与 `/dev/dri/card1`）。
   - **SurfaceFlinger 与 Mesa 硬件渲染确认（`95.47s`，无任何软渲染回退）**：
@@ -78,13 +80,51 @@
     - 编译 `libgallium_dri.so` 时仅启用了 `-Dgallium-drivers=panfrost`（未编译 `llvmpipe`/`softpipe`/`swrast`），且移除了 `com.android.hardware.graphics.allocator.minigbm_dmabuf` 与 SwiftShader APEX，从构建产物与日志两方面确认 100% 走 Panfrost 硬件管线，不存在 fallback 到软件渲染或低效模式的情况。
     - `drmhwc`（`hwc3-drm`）成功绑定 `/dev/dri/card0`（`Backend 'generic' for 'DSI-1' and driver 'rockchip' was successfully set`）。
   - **启动耗时与稳定性**：从 `starting service 'surfaceflinger'` 到 `sys.boot_completed=1` 耗时从 SwiftShader 的 `145.71s` 缩短至 `64.36s`（提速 2.26 倍），总开机时间从 `320.06s` 降至 `156.92s`。整次运行至 `220.6s` 用户请求正常关机期间，`FATAL EXCEPTION` 为 0 次，`ANR` 为 0 次，GPU 报错/超时为 0 次。
-  - **划屏 30–45 fps 体感原因分析**：
-    1. **CPU 调频与内存控制器调频模块尚未加载**：排查 `6.6.34-phase2` 内核配置与内置盘 `lsmod` 发现，`CONFIG_CPUFREQ_DT=m`（`cpufreq-dt.ko`）、`CONFIG_ROCKCHIP_THERMAL=m`（`rockchip_thermal.ko`）、`CONFIG_DEVFREQ_EVENT_ROCKCHIP_DFI=m`（`rockchip-dfi.ko`）与 `CONFIG_ARM_RK3399_DMC_DEVFREQ=m`（`rk3399_dmc.ko`）均为模块。未加载 `cpufreq-dt.ko` 时，RK3399（OP1）的 4×A53 与 2×A72 停留在 bootloader 初始频率而无法升频至 `1.512 GHz / 2.016 GHz`，UI 线程、`RenderThread` 与 `SurfaceFlinger` 提交速度受限；下一步可将 `cpufreq-dt.ko`、`rockchip_thermal.ko`、`rockchip-dfi.ko`、`rk3399_dmc.ko` 一并拷入 `/vendor/lib/` 并在 `init.gru.rc` 加载。
-    2. **2048×1536 高分屏与线性 Buffer 带宽上限**：Scarlet 面板为 2048×1536（314.5 万像素，比 1920×1200 多 36.5%），且 `minigbm-upstream` generic 后端在 `rockchip` VOP 上分配的是未压缩线性 buffer（`DRM_FORMAT_MOD_LINEAR`，单帧 32-bit RGBA 约 12.6 MB），Mali-T860 MP4 在 LPDDR3 共享内存带宽下推动 2K 视网膜屏合成存在天然硬件带宽上限。
+  - **划屏 30–45 fps 体感原因分析与调频补齐**：
+    1. **CPU 调频与内存控制器调频模块补齐与实机验证（`/tmp/bootlog20.txt`，7799 行）**：
+       - 排查 `6.6.34-phase2` 内核配置与内置盘 `lsmod`/`dmesg` 发现，`CONFIG_CPUFREQ_DT=m`（`cpufreq-dt.ko`）、`CONFIG_ROCKCHIP_THERMAL=m`（`rockchip_thermal.ko`）、`CONFIG_DEVFREQ_EVENT_ROCKCHIP_DFI=m`（`rockchip-dfi.ko`）与 `CONFIG_ARM_RK3399_DMC_DEVFREQ=m`（`rk3399_dmc.ko`）均为零外部依赖的模块。未加载 `cpufreq-dt.ko` 时，RK3399（OP1）的 4×A53 与 2×A72 锁死在 bootloader 初始频率 `600000 KHz`（600 MHz），无法升频至 `1512000 KHz`（1.512 GHz）/ `2016000 KHz`（2.016 GHz），内存控制器也停留在 `400000000 Hz`（400 MHz）而非上限 `928000000 Hz`（928 MHz）。
+       - 从 `modinstall/lib/modules/6.6.34-phase2` 提取这 4 个模块放入 `device/google/gru/modules/` 并拷入 `/vendor/lib/`，在 `init.gru.rc` 的 `on early-init` 按序 `insmod`，同时在 `gru-logcat.sh` 增加 `GRU_FREQ` 输出。
+       - **实机验证（`bootlog20.txt`）**：
+         - `7.79s` 内核打印 `cpufreq: cpufreq_online: CPU4: Running at unlisted initial frequency: 600000 KHz, changing to: 816000 KHz`，确认解除了 600 MHz 锁频。
+         - `73.7s` `GRU_FREQ` 读数确认所有调频器与频率上限全部就位：
+           - `policy0`（4×Cortex-A53）：`cur=1512000 max=1512000 gov=schedutil`（满频 1.512 GHz）
+           - `policy4`（2×Cortex-A72）：`cur=2016000 max=2016000 gov=schedutil`（满频 2.016 GHz）
+           - `ff9a0000.gpu`（Mali-T860 MP4）：`cur=500000000 max=800000000 gov=simple_ondemand`（上限 800 MHz）
+           - `memory-controller`（LPDDR3 DMC）：`cur=400000000 max=928000000 gov=simple_ondemand`（上限 928 MHz）
+         - **启动耗时三连降**：`surfaceflinger` 启动时间从 `92.56s` 提前至 `73.55s`（提早 19.0 秒），`sys.boot_completed=1` 从 `156.92s` 提前至 `125.21s`（再缩短 31.7 秒，对比 SwiftShader 的 `320.06s` 总计快了 194.8 秒），上次关机前的 `Failed to create DrmKmsPlan` 也降为 0 次。
+         - **附带发现（Emulated Storage / `fuse.ko`）**：`bootlog20.txt` 中用户在打开「设置 -> 存储」时触发 1 次 `IllegalArgumentException: Volume external_primary not found`（`StorageAsyncLoader`），排查确认 `CONFIG_FUSE_FS=m`（`kernel/fs/fuse/fuse.ko.xz`，零外部依赖）尚未加载导致 `/dev/fuse` 缺失、`/storage/emulated/0` 未挂载，将在下一轮构建中一并加载 `fuse.ko`。
+    2. **2048×1536 高分屏与线性 Buffer 带宽上限（30–45 fps 客观硬件边界）**：在 CPU（1.51 / 2.02 GHz）、GPU（800 MHz）、内存（928 MHz）全部满血工作后，应用打开与触控响应速度明显提升，但桌面划屏帧率仍稳定在 30–45 fps。这确认该帧率是 RK3399 的硬件边界：Scarlet 面板为 2048×1536（314.5 万像素，比 1920×1200 多 36.5%），且 `minigbm-upstream` generic 后端在 `rockchip` VOP 上分配的是未压缩线性 buffer（`DRM_FORMAT_MOD_LINEAR`，单帧 32-bit RGBA 约 12.6 MB），2016 年 Midgard 架构的 4 核 Mali-T860 MP4 在双通道 LPDDR3 共享内存带宽下推动 2K 视网膜屏合成的吞吐上限即在 30–45 fps 区间。
+
+### 3. 触摸、旋转与手写笔（含 `fuse.ko` 补齐）
+
+- **当前实机基线状态记录（2026-10-19）**：
+  1. **触摸屏（`Elan Touchscreen`，`elants_i2c 3-0010`）**：在默认方向（竖屏）下基本触控正常（已由第一阶段 ramdisk 加载 `elants_i2c.ko` 注册为 `input0`），待后续进一步核对边缘/多点触控与横竖屏坐标映射等隐性边界情况。
+  2. **屏幕旋转**：
+     - 在内置盘 postmarketOS v25.06（运行 `kwin_wayland`）上点击自动旋转会直接导致整机卡死；排查内置盘发现 `iio-sensor-proxy` 在后台早已开启 `iio:device0/buffer/enable=1` 正常读取传感器而未卡死。在 Android 下，90°/270° 旋转因 `rockchip` VOP plane 的 `transform_enum_mask_` 不包含 `DRM_MODE_ROTATE_270`，`drm_hwcomposer`（`DrmPlane::IsValidForLayer`）会安全回退到 `SurfaceFlinger` GPU Client 合成。
+     - 在外置盘 LineageOS 23.2 上点击自动旋转不会卡死，但旋转无任何效果；手动旋转入口暂未测试。
+     - 日志与系统排查：`bootlog19.txt` / `bootlog20.txt` 中 `system_server` 报错 `Could not find android.hardware.sensors.ISensors/default in the VINTF manifest`，且内核 IIO 传感器模块（`kfifo_buf.ko`、`industrialio-triggered-buffer.ko`、`cros-ec-sensorhub.ko`、`cros_ec_sensors_core.ko`、`cros_ec_sensors.ko`）尚未在 Android 下加载。
+  3. **Wacom 电磁笔（`2D1F:0036`）**：
+     - 在 LineageOS 23.2 下完全无反应（即使已在开发者选项开启“使用手写笔”）。
+     - 日志与系统排查：对比内置盘 `/proc/bus/input/devices` 发现，Scarlet 的 Wacom 电磁笔挂在 `/devices/platform/ff120000.i2c/i2c-2/2-0009/0018:2D1F:0036.0001`（`hid-over-i2c 2D1F:0036 Stylus`），驱动模块为 `i2c-hid.ko` 与 `i2c-hid-of.ko`（`CONFIG_I2C_HID_CORE=m`、`CONFIG_I2C_HID_OF=m`，而 `CONFIG_HID_GENERIC=y` 已内建），此外笔槽插拔检测 `switch-pen-insert`（`SW_PEN_INSERTED`）在 `gpio_keys.ko` 中；外置盘 Android 尚未加载这几个模块，因此内核根本未注册 Stylus input 节点。
+- **修改与实施方案**：
+  1. **补齐内核模块（`device/google/gru/modules/` 与 `init.gru.rc` `on early-init`）**：
+     - 存储挂载：`fuse.ko`（`kernel/fs/fuse/fuse.ko.xz`，解决 `/dev/fuse` 缺失导致 `external_primary` 模拟存储未挂载的问题）。
+     - Wacom 电磁笔与笔槽开关：`i2c-hid.ko`、`i2c-hid-of.ko`、`gpio_keys.ko`。
+     - ChromeOS EC IIO 传感器栈：`kfifo_buf.ko`、`industrialio-triggered-buffer.ko`、`cros-ec-sensorhub.ko`、`cros_ec_sensors_core.ko`、`cros_ec_sensors.ko`（注册 `iio:device0` `cros-ec-accel` 与 `iio:device1` `cros-ec-gyro`）。
+  2. **输入设备 IDC 配置（`device/google/gru/idc/`）**：
+     - `Vendor_04f3_Product_0b03.idc`（`Elan Touchscreen`，`1856x2496` 原生竖屏）与 `Vendor_2d1f_Product_0036.idc`（`hid-over-i2c 2D1F:0036 Stylus`，`14746x19661` 原生竖屏）：均配置 `device.internal = 1`、`touch.deviceType = touchScreen`、`touch.orientationAware = 1`，使触摸与手写笔坐标在横竖屏切换时自动跟随屏幕方向。
+  3. **接入 ChromeOS EC IIO 传感器 HAL（`device/google/gru/hal/sensors/`）**：
+     - 参照 `third_party/android_device_google_trogdor-lineage-24/hal/sensors/` 移植 `android.hardware.sensors@2.1-gru-subhal`（配合 `android.hardware.sensors-service.multihal` 及自带 VINTF fragment `android.hardware.sensors-multihal.xml`），在 `scan_elements` 前先确保 `enable_sensor(..., false)` 关闭 buffer。
+     - 配置 `/vendor/etc/sensors/hals.conf` 与 `/vendor/etc/sensors/sensor_hal_configuration.xml`（ChromeOS EC 已将 `lid_accel` 校正为面板自然方向，平放时实测 `in_accel_z_raw = +8130` 即 `+9.73 m/s²`，与 Android 标准坐标系一致，故 `x/y/z` 采用 `0/1/2` 恒等映射）。
+     - 添加 `/vendor/etc/ueventd.gru.rc` 并在 `init.gru.rc` `on post-fs` 双重设置 `/dev/iio:device0..1` 与 `/sys/bus/iio/devices/iio:device0..1` 下 `buffer/*`、`sampling_frequency`、`scan_elements/*_en` 的 `0660 system system` 权限；补齐 `android.hardware.sensor.accelerometer.xml` 与 `android.hardware.sensor.gyroscope.xml` 权限声明。
+- **构建产物**：
+  - `out/target/product/gru/super.img` 大小 `1249505684` 字节，sha256 `1e240695d3c4ef4e60755942ae2d0d75095c6a8d4236b4d286caa87662656ab4`。
 
 ## 事件
 
 | 日期 | 事件 |
 | --- | --- |
 | 2026-10-19 | 阶段 4 第 1 项验证通过：写入 `super.img`（`5905b1e2...`）后启动外置盘，`zram0` 2919648 kB swap 启用，`Launcher3` 与 `Seedvault` 崩溃以及设置应用 ANR 全部归零。内置盘 eMMC `pmOS_kernel` 校验和保持 `5c188eeb7a89fdb1bf442ccccd61a556ad5e232149454659853e7dee98f0068a`。 |
-| 2026-10-19 | 阶段 4 第 2 项验证通过：写入 `super.img`（`345ebd9a...`）后启动外置盘，`panfrost` 驱动与 Mesa 25.3.3 `Mali-T860 (Panfrost)` OpenGL ES 3.1 硬件加速正常启用，无软渲染回退，`SurfaceFlinger` 至开机完成耗时从 145.7 秒缩短至 64.4 秒，0 次崩溃/ANR。同时定位到 `cpufreq-dt.ko` 等调频模块尚未加载是限制满血帧率的可优化项。 |
+| 2026-10-19 | 阶段 4 第 2 项验证通过：写入 `super.img`（`345ebd9a...`）后启动外置盘，`panfrost` 驱动与 Mesa 25.3.3 `Mali-T860 (Panfrost)` OpenGL ES 3.1 硬件加速正常启用，无软渲染回退，`SurfaceFlinger` 至开机完成耗时从 145.7 秒缩短至 64.4 秒，0 次崩溃/ANR。 |
+| 2026-10-19 | 补齐 CPU/内存调频模块（`cpufreq-dt.ko`、`rockchip_thermal.ko`、`rockchip-dfi.ko`、`rk3399_dmc.ko`）并写入 `super.img`（`04155eb4...`）验证通过：`GRU_FREQ` 确认小核 `1.512 GHz`、大核 `2.016 GHz`、GPU `800 MHz`、内存控制器 `928 MHz` 全部上线，总开机时间从 156.9 秒进一步缩短至 125.2 秒，响应速度明显提升，确认 2048×1536 线性合成下 30–45 fps 为 Mali-T860 MP4 硬件带宽边界。 |
+| 2026-10-19 | 完成阶段 4 第 3 项（触摸、旋转、Wacom 手写笔）及 `fuse.ko` 构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `1e240695d3c4ef4e60755942ae2d0d75095c6a8d4236b4d286caa87662656ab4`（`1249505684` 字节），包含 `fuse.ko`、`i2c-hid` 手写笔模块、`cros_ec_sensors` IIO 传感器模块、`android.hardware.sensors@2.1-gru-subhal` 与触摸/手写笔 IDC 配置。 |

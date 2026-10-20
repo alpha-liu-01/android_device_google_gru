@@ -192,11 +192,13 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/i2c-hid-of.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid-of.ko \
     $(LOCAL_PATH)/modules/i2c-hid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid.ko \
     $(LOCAL_PATH)/modules/industrialio-triggered-buffer.ko:$(TARGET_COPY_OUT_VENDOR)/lib/industrialio-triggered-buffer.ko \
+    $(LOCAL_PATH)/modules/inet_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/inet_diag.ko \
     $(LOCAL_PATH)/modules/kfifo_buf.ko:$(TARGET_COPY_OUT_VENDOR)/lib/kfifo_buf.ko \
     $(LOCAL_PATH)/modules/libarc4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/libarc4.ko \
     $(LOCAL_PATH)/modules/lz4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/lz4.ko \
     $(LOCAL_PATH)/modules/mac80211.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mac80211.ko \
     $(LOCAL_PATH)/modules/panfrost.ko:$(TARGET_COPY_OUT_VENDOR)/lib/panfrost.ko \
+    $(LOCAL_PATH)/modules/raw_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/raw_diag.ko \
     $(LOCAL_PATH)/modules/rfcomm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfcomm.ko \
     $(LOCAL_PATH)/modules/rfkill.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfkill.ko \
     $(LOCAL_PATH)/modules/rk3399_dmc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rk3399_dmc.ko \
@@ -219,6 +221,8 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/snd-timer.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-timer.ko \
     $(LOCAL_PATH)/modules/snd.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd.ko \
     $(LOCAL_PATH)/modules/soundcore.ko:$(TARGET_COPY_OUT_VENDOR)/lib/soundcore.ko \
+    $(LOCAL_PATH)/modules/tcp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/tcp_diag.ko \
+    $(LOCAL_PATH)/modules/udp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/udp_diag.ko \
     $(LOCAL_PATH)/modules/uhid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uhid.ko \
     $(LOCAL_PATH)/modules/zram.ko:$(TARGET_COPY_OUT_VENDOR)/lib/zram.ko
 

@@ -1,0 +1,88 @@
+diff --git a/core/java/com/android/internal/display/BrightnessUtils.java b/core/java/com/android/internal/display/BrightnessUtils.java
+index 676f6d2f4..485166773 100644
+--- a/core/java/com/android/internal/display/BrightnessUtils.java
++++ b/core/java/com/android/internal/display/BrightnessUtils.java
+@@ -16,6 +16,7 @@
+ 
+ package com.android.internal.display;
+ 
++import android.os.SystemProperties;
+ import android.util.MathUtils;
+ 
+ /**
+@@ -34,6 +35,9 @@ import android.util.MathUtils;
+  */
+ public class BrightnessUtils {
+ 
++    public static final boolean sDisableGammaConversion =
++            SystemProperties.getBoolean("sys.brightness.disable_gamma_conversion", false);
++
+     // Float.NaN (used as invalid for brightness) cannot be stored in config.xml
+     // so -2 is used instead
+     public static final float INVALID_BRIGHTNESS_IN_CONFIG = -2f;
+@@ -51,6 +55,9 @@ public class BrightnessUtils {
+      * @return The corresponding value in the linear space [0 .. 1.0].
+      */
+     public static final float convertGammaToLinear(float val) {
++        if (sDisableGammaConversion) {
++            return MathUtils.constrain(val, 0f, 1f);
++        }
+         final float ret;
+         if (val <= R) {
+             ret = MathUtils.sq(val / R);
+@@ -74,6 +81,9 @@ public class BrightnessUtils {
+      * @return The corresponding value in gamma space [0 .. 1.0]
+      */
+     public static final float convertLinearToGamma(float val) {
++        if (sDisableGammaConversion) {
++            return MathUtils.constrain(val, 0f, 1f);
++        }
+         // For some reason, HLG normalizes to the range [0, 12] rather than [0, 1]
+         final float normalizedVal = val * 12;
+         final float ret;
+diff --git a/packages/SettingsLib/src/com/android/settingslib/media/LocalMediaManager.java b/packages/SettingsLib/src/com/android/settingslib/media/LocalMediaManager.java
+index 35066eb6f..cb18dc1b8 100644
+--- a/packages/SettingsLib/src/com/android/settingslib/media/LocalMediaManager.java
++++ b/packages/SettingsLib/src/com/android/settingslib/media/LocalMediaManager.java
+@@ -124,7 +124,7 @@ public class LocalMediaManager implements BluetoothCallback {
+         boolean wasEmpty = mCallbacks.isEmpty();
+         if (!mCallbacks.contains(callback)) {
+             mCallbacks.add(callback);
+-            if (wasEmpty) {
++            if (wasEmpty && mInfoMediaManager != null) {
+                 mInfoMediaManager.registerCallback(mMediaDeviceCallback);
+             }
+         }
+@@ -135,7 +135,9 @@ public class LocalMediaManager implements BluetoothCallback {
+      */
+     public void unregisterCallback(DeviceCallback callback) {
+         if (mCallbacks.remove(callback) && mCallbacks.isEmpty()) {
+-            mInfoMediaManager.unregisterCallback(mMediaDeviceCallback);
++            if (mInfoMediaManager != null) {
++                mInfoMediaManager.unregisterCallback(mMediaDeviceCallback);
++            }
+             unRegisterDeviceAttributeChangeCallback();
+         }
+     }
+@@ -327,7 +329,9 @@ public class LocalMediaManager implements BluetoothCallback {
+      * Start scan connected MediaDevice
+      */
+     public void startScan() {
+-        mInfoMediaManager.startScan();
++        if (mInfoMediaManager != null) {
++            mInfoMediaManager.startScan();
++        }
+     }
+ 
+     void dispatchDeviceListUpdate() {
+@@ -388,7 +392,9 @@ public class LocalMediaManager implements BluetoothCallback {
+      * Stop scan MediaDevice
+      */
+     public void stopScan() {
+-        mInfoMediaManager.stopScan();
++        if (mInfoMediaManager != null) {
++            mInfoMediaManager.stopScan();
++        }
+     }
+ 
+     /**

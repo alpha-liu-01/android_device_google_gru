@@ -1,0 +1,50 @@
+--- a/drivers/input/keyboard/cros_ec_keyb.c
++++ b/drivers/input/keyboard/cros_ec_keyb.c
+@@ -243,6 +243,24 @@
+ 	input_sync(idev);
+ }
+ 
++static bool cros_ec_keyb_any_bs_pressed(struct cros_ec_keyb *ckdev)
++{
++	struct input_dev *idev = ckdev->bs_idev;
++	int i;
++
++	if (!idev)
++		return false;
++
++	for (i = 0; i < ARRAY_SIZE(cros_ec_keyb_bs); i++) {
++		const struct cros_ec_bs_map *map = &cros_ec_keyb_bs[i];
++
++		if (map->ev_type == EV_KEY && test_bit(map->code, idev->key))
++			return true;
++	}
++
++	return false;
++}
++
+ static int cros_ec_keyb_work(struct notifier_block *nb,
+ 			     unsigned long queued_during_suspend, void *_notify)
+ {
+@@ -290,6 +308,22 @@
+ 			val = get_unaligned_le32(
+ 					&ckdev->ec->event_data.data.buttons);
+ 			ev_type = EV_KEY;
++			/*
++			 * When waking from S3, the AP takes ~200 ms to reach
++			 * cros_ec_spi_resume() and query EC_CMD_GET_NEXT_EVENT.
++			 * Because the EC MKBP button event reports the current
++			 * instantaneous button bitmap rather than buffering
++			 * transitions, a normal short tap of the power button
++			 * is already released (val == 0) by the time the AP
++			 * reads the event, and input_event(..., 0) would be
++			 * silently dropped as a 0->0 no-op. Synthesize the
++			 * missed KEY_POWER press before reporting the release.
++			 */
++			if (!val && ckdev->bs_idev &&
++			    !cros_ec_keyb_any_bs_pressed(ckdev)) {
++				input_report_key(ckdev->bs_idev, KEY_POWER, 1);
++				input_sync(ckdev->bs_idev);
++			}
+ 		} else {
+ 			val = get_unaligned_le32(
+ 					&ckdev->ec->event_data.data.switches);

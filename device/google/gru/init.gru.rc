@@ -11,6 +11,13 @@ on early-init
     # calls synchronize_rcu(). CONFIG_NET_KEY=m, so the family is missing
     # until this module is loaded, and the swap then kills system_server.
     insmod /vendor/lib/af_key.ko
+    # ConnectivityService tears down live sockets via NETLINK_SOCK_DIAG
+    # (SOCK_DIAG_BY_FAMILY) when networks disconnect on suspend/resume;
+    # without inet_diag/tcp_diag, NetlinkUtils waits 30s on EAGAIN timeouts.
+    insmod /vendor/lib/inet_diag.ko
+    insmod /vendor/lib/tcp_diag.ko
+    insmod /vendor/lib/udp_diag.ko
+    insmod /vendor/lib/raw_diag.ko
     insmod /vendor/lib/fuse.ko
     insmod /vendor/lib/rockchip_thermal.ko
     insmod /vendor/lib/cpufreq-dt.ko

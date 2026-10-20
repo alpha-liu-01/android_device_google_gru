@@ -216,7 +216,25 @@ RuntimeWatchdogSec=30
 
 完成标准：在 4 GB 内存上完成一次「开机、联网、打开网页、安装应用、睡眠、唤醒」。唤醒后仍是同一次启动，而不是看门狗把机器打进 bootloader。电量不要出现 postmarketOS 上那种突然变成 0、插电后又回到 60% 到 70% 的读数。
 
-摄像头和视频解码不在这段的完成标准里。
+#### 阶段 4.5：进入阶段 5 前的收尾与扩展项
+
+原定阶段 4 的 9 项基础外设与 S3 睡眠唤醒已全部跑通，在进入阶段 5（打包可分发镜像）之前，按以下优先级完成收尾与外设扩展：
+
+1. **系统 WebView 渲染黑屏与网页加载修复（P0，阶段 4 退出标准收尾）— 已完成**
+   - **现象**：信息流联网正常、Geekbench 6 历史跑分列表可见（单核 317 / 多核 816），但点进 Geekbench 结果详情页（本地 WebView 渲染）黑屏、浏览器网页无法正常显示。
+   - **根因**：主线 `6.6.34` 内核无 `/dev/ashmem`，系统启用了 `sys.use_memfd=true`。当 Chromium 将 Mojo IPC 环形缓冲区和光栅化共享内存 fd 传递给沙盒渲染进程 `com.android.webview:sandboxed_process0`（`isolated_app`）时，`ASharedMemory_getSize(fd)` 调用 `libcutils.so` 的 `is_memfd_fd(fd)`；原实现先执行 `readlink("/proc/self/fd/%d")` 检查路径前缀，而 `isolated_app` 进程因 `dumpable=0`（`/proc/self/fd` 属主为 `root:root 0500`）及 Chromium renderer seccomp-bpf 沙盒策略导致 `readlinkat` 返回 `EPERM`，进而回退尝试 `stat("/dev/ashmem...")` 失败（`ENOENT`），使所有共享内存大小返回 `0`，渲染进程陷入死循环（每秒刷出约 1.2 万行 `E ashmem` 日志）导致网页全黑。
+   - **修复与验证**：修改 `system/core/libcutils/ashmem-dev.cpp` 中的 `is_memfd_fd(int fd)`，去除对 `/proc/self/fd` 的 `readlink` 依赖，直接通过 `fcntl(fd, F_GET_SEALS)` 判定 `memfd` 及 `F_SEAL_GROW | F_SEAL_SHRINK` 密封标志。实机验证 `E ashmem` 报错彻底清零，Geekbench 6 结果详情页与 LineageOS Jelly 浏览器网页均正常渲染显示，已固化入 `super.img`（`c4e8a01fea4dcfff8efe79e9e1efe0469d7901d790e0071a715790cab880f952`）。
+2. **全功能 Type-C USB（MTP / PTP / 有线 adb + OTG Host 外设 + PD 充电共存）（P1）**
+   - **现状与根因**：`rk3399-gru.dtsi` 中 `usbdrd3_0` 已绑定 `extcon = <&usbc_extcon0>`，但子节点 `usbdrd_dwc3_0`（`fe800000.usb`）被写死为 `dr_mode = "host"`，内核未注册 UDC，且 `init` 中临时禁用了 USB Gadget。
+   - **目标**：将 `usbdrd_dwc3_0` 改为 `dr_mode = "otg"` 并启用 `CONFIG_USB_DWC3_DUAL_ROLE`，由 ChromeOS EC 的 `extcon-usbc-cros-ec` 根据插入对象自动切换角色——接电脑时作为 Peripheral 提供有线 `adb`、MTP、PTP；接扩展坞/转接头时作为 Host 支持 USB 鼠标、U 盘与 USB 声卡（`snd-usb-audio.ko` + `usb_audio_policy_configuration.xml`，可替代本机物理损坏的 3.5mm 耳机孔），并与 `cros_usbpd-charger` 的 PD 充电同时工作。
+3. **V4L2 Stateless 硬件视频解码（`hantro_vpu` / `rockchip_vdec` -> Android `MediaCodec`）（P2，并为摄像头 V4L2 管线铺路）**
+   - **剔除项**：剔除瑞芯微私有 `rkmpp` 路线（`rkmpp` 依赖下游 BSP 内核专有的 `/dev/mpp_service`，在主线内核上不可能工作；Linux 下 MPV 实际走的是主线 V4L2 Stateless Request API）。
+   - **目标**：打包并加载 `hantro_vpu.ko`、`rockchip_vdec.ko`、`v4l2-mem2mem.ko`、`videobuf2-*` 模块（生成 `/dev/video*` 与 `/dev/media*`），配置/适配 Android Codec2 V4L2 HAL（`external/v4l2_codec2` / `system/cros-codecs` V4L2 Stateless），使系统 `MediaCodec` 注册硬件解码器（H.264 / HEVC / VP8 / VP9），让第三方客户端（如 PiliPlus 选 `auto / mediacodec`）与系统播放器直接走硬件解码，同时打通 V4L2 + `dma_heap` / `minigbm` 零拷贝缓冲区链路。
+4. **USB-C DP Alt Mode 外接显示器（`cdn-dp` + `rockchip/dptx.bin`）（P3）**
+   - **目标**：在第 2 步调通 Type-C `usbc_extcon0` 角色切换的基础上，将内置盘 `/lib/firmware/rockchip/dptx.bin` 放入 `/vendor/firmware/rockchip/dptx.bin`，打通 `phy-rockchip-typec` 与 `cdn-dp` 的 DP Alt Mode 握手与链路训练，验证 `drm_hwcomposer` 对外接显示器（`DP-1`）的热插拔投屏及 `pcmC0D3p`（`spdif-hifi-3`）DP 音频输出。
+5. **在现有 `6.6.34` 内核上测试前后摄像头（`rkisp1` + `ov5695` / `ov2685` + `libcamera`）（P4，探索项）**
+   - **剔除项**：**剔除「升级测试 postmarketOS 7.x 内核」**。经核对 `pmaports-main` 的 `7.2.9` 与当前 `6.6.34-phase2`，两者的摄像头配置完全一致（`CONFIG_PHY_ROCKCHIP_DPHY_RX0=y`、`CONFIG_VIDEO_ROCKCHIP_ISP1=m`、`CONFIG_VIDEO_OV5695=m`、`CONFIG_VIDEO_OV2685=m`，且 `rk3399-gru-scarlet.dtsi` 中 `wcam`、`ucam`、`isp0`、`mipi_dphy_rx0` 均已启用）；7.x 并无针对 Gru 摄像头的专属补丁，而更换 7.x 内核会引入 DSI EoTp 闪屏、cgroup 与 S3 深度休眠失效等严重回归。
+   - **目标**：保持稳定的 `6.6.34-phase2` 内核不变，在第 3 步打通 V4L2 管线后，加载现有的 `rockchip-isp1.ko`、`ov5695.ko`、`ov2685.ko` 及 V4L2 依赖模块，结合树内的 `external/libcamera`（`rkisp1` pipeline，`TARGET_CAMERA_PROVIDER_HAL := libcamera`）探索前后摄像头预览与拍照。
 
 ### 5 可分发的 SD 镜像
 
@@ -244,7 +262,6 @@ SELinux enforcing、从源码构建内核、安装和升级说明，放在有可
 - Android 17
 - OTA
 - GApps、Widevine
-- 摄像头、Hantro 硬解码
 - kevin、bob，以及没有机器在手上的 Scarlet 面板变体
 
 ## 这个仓库
@@ -253,4 +270,4 @@ SELinux enforcing、从源码构建内核、安装和升级说明，放在有可
 
 Soong 不跟随目录符号链接。设备树放到 Android 树里时，每个文件单独链回这个仓库，和上次 Trogdor 的做法相同。
 
-下一步做阶段 0 剩下的四项只读核对。核对完再写阶段 1 的内核分区。
+当前进度：阶段 0～3 及阶段 4 原定 9 项（Panfrost、zram、触摸/旋转/手写笔、背光、Wi-Fi 与无线 `adb`、蓝牙、音频、电量与充电、S3 睡眠唤醒）已全部跑通；下一步按「阶段 4.5」顺序推进 WebView 黑屏修复、全功能 Type-C USB、V4L2 硬解、DP Alt Mode 外接屏与 6.6.34 下的摄像头测试。

@@ -1,0 +1,52 @@
+diff --git a/libcutils/ashmem-dev.cpp b/libcutils/ashmem-dev.cpp
+index 0874655..c23c995 100644
+--- a/libcutils/ashmem-dev.cpp
++++ b/libcutils/ashmem-dev.cpp
+@@ -93,14 +93,6 @@ static bool __has_memfd_support() {
+         return false;
+     }
+ 
+-    // Check that the kernel supports the ashmem ioctls on a memfd.
+-    int ashmem_size = TEMP_FAILURE_RETRY(ioctl(fd, ASHMEM_GET_SIZE, 0));
+-    if (ashmem_size != static_cast<int>(buf_size)) {
+-        ALOGE("ioctl(ASHMEM_GET_SIZE): %d != buf_size: %zd , no ashmem-memfd compat support",
+-              ashmem_size, buf_size);
+-        return false;
+-    }
+-
+     if (debug_log) {
+         ALOGD("memfd: device has memfd support, using it");
+     }
+@@ -197,24 +189,20 @@ static int __ashmem_check_failure(int fd, int result) {
+ }
+ 
+ static bool is_memfd_fd(int fd) {
+-    std::string fd_path = android::base::StringPrintf("/proc/self/fd/%d", fd);
+-    std::string result;
+-    if (!android::base::Readlink(fd_path, &result)) {
+-        ALOGE("readlink(%s) failed: %m", fd_path.c_str());
+-        return false;
+-    }
+-
+-    if (!result.starts_with("/memfd:")) {
+-        return false;
+-    }
+-
+     // b/498720726: Ensure that the memfd has the same restrictions on its size that an ashmem fd
+     // would. Otherwise, memfds that aren't sealed against size changes can be treated as valid
+     // ashmem fds. The size of the memory associated with those fds can then be changed while a
+     // process is using it, leading to time of check to time of use issues.
++    //
++    // Do not call readlink("/proc/self/fd/%d") before F_GET_SEALS: in isolated_app processes
++    // (such as WebView's sandboxed_process0), Chromium's renderer seccomp-bpf policy blocks
++    // __NR_readlinkat with EPERM. In the Linux kernel (fs/fcntl.c -> memfd_fcntl), F_GET_SEALS
++    // only succeeds on memfd descriptors created with MFD_ALLOW_SEALING.
+     int seals = fcntl(fd, F_GET_SEALS);
+     if (seals == -1) {
+-        ALOGE("is_memfd_fd(%d): F_GET_SEALS failed: %m", fd);
++        if (debug_log) {
++            ALOGE("is_memfd_fd(%d): F_GET_SEALS failed: %m", fd);
++        }
+         return false;
+     }
+ 

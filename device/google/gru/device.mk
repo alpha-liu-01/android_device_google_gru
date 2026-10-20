@@ -11,9 +11,7 @@
 LOCAL_PATH := device/google/gru
 
 AB_OTA_UPDATER := false
-# No controller. Advertising android.hardware.bluetooth makes SystemServer
-# construct BluetoothService, which aborts when com.android.bluetooth is disabled.
-TARGET_BLUETOOTH_HAL := none
+TARGET_BLUETOOTH_HAL := default-aidl
 TARGET_GRAPHICS := mesa
 TARGET_GRAPHICS_VULKAN := none
 TARGET_GRAPHICS_ALLOCATOR_HAL := minigbm-upstream
@@ -54,7 +52,31 @@ PRODUCT_PRODUCT_PROPERTIES += \
     sys.brightness.disable_gamma_conversion=true \
     wifi.interface=wlan0 \
     wifi.direct.interface=p2p-dev-wlan0 \
-    wifi.supplicant_scan_interval=15
+    wifi.supplicant_scan_interval=15 \
+    persist.bluetooth.a2dp_aac.vbr_supported=true \
+    bluetooth.device.class_of_device=90,2,12 \
+    bluetooth.le.disable_apcf_extended_features=1 \
+    bluetooth.profile.asha.central.enabled=true \
+    bluetooth.profile.a2dp.source.enabled=true \
+    bluetooth.profile.avrcp.target.enabled=true \
+    bluetooth.profile.gatt.enabled=true \
+    bluetooth.profile.hfp.ag.enabled=true \
+    bluetooth.profile.hid.device.enabled=true \
+    bluetooth.profile.hid.host.enabled=true \
+    bluetooth.profile.map.server.enabled=true \
+    bluetooth.profile.mcp.server.enabled=true \
+    bluetooth.profile.opp.enabled=true \
+    bluetooth.profile.pan.nap.enabled=true \
+    bluetooth.profile.pan.panu.enabled=true \
+    bluetooth.profile.pbap.server.enabled=true \
+    bluetooth.profile.sap.server.enabled=true \
+    bluetooth.profile.bap.broadcast.assist.enabled=false \
+    bluetooth.profile.bap.unicast.client.enabled=false \
+    bluetooth.profile.bas.client.enabled=false \
+    bluetooth.profile.ccp.server.enabled=false \
+    bluetooth.profile.csip.set_coordinator.enabled=false \
+    bluetooth.profile.hap.client.enabled=false \
+    bluetooth.profile.vcp.controller.enabled=false
 
 PRODUCT_VENDOR_PROPERTIES += \
     persist.sys.zram_enabled=1 \
@@ -69,6 +91,7 @@ PRODUCT_VENDOR_PROPERTIES += \
 FORCE_USE_ANDROIDMK_FOR_WPA_CONF := true
 PRODUCT_PACKAGES += \
     hwservicemanager \
+    android.hardware.bluetooth-service.default \
     android.hardware.sensors-service.multihal \
     android.hardware.sensors@2.1-gru-subhal \
     android.hardware.wifi-service \
@@ -80,6 +103,8 @@ PRODUCT_PACKAGES += \
     wificond
 
 PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.hardware.bluetooth.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.bluetooth.xml \
+    frameworks/native/data/etc/android.hardware.bluetooth_le.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.bluetooth_le.xml \
     frameworks/native/data/etc/android.hardware.wifi.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.xml \
     frameworks/native/data/etc/android.hardware.wifi.direct.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.direct.xml \
     frameworks/native/data/etc/android.hardware.wifi.passpoint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.passpoint.xml \
@@ -115,6 +140,15 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board.bin \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/firmware-4.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/firmware-4.bin \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/firmware-6.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/firmware-6.bin \
+    $(LOCAL_PATH)/firmware/qca/nvm_usb_00000200.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/nvm_usb_00000200.bin \
+    $(LOCAL_PATH)/firmware/qca/nvm_usb_00000201.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/nvm_usb_00000201.bin \
+    $(LOCAL_PATH)/firmware/qca/nvm_usb_00000300.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/nvm_usb_00000300.bin \
+    $(LOCAL_PATH)/firmware/qca/nvm_usb_00000302.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/nvm_usb_00000302.bin \
+    $(LOCAL_PATH)/firmware/qca/nvm_usb_00000302_eu.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/nvm_usb_00000302_eu.bin \
+    $(LOCAL_PATH)/firmware/qca/rampatch_usb_00000200.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/rampatch_usb_00000200.bin \
+    $(LOCAL_PATH)/firmware/qca/rampatch_usb_00000201.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/rampatch_usb_00000201.bin \
+    $(LOCAL_PATH)/firmware/qca/rampatch_usb_00000300.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/rampatch_usb_00000300.bin \
+    $(LOCAL_PATH)/firmware/qca/rampatch_usb_00000302.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/qca/rampatch_usb_00000302.bin \
     $(LOCAL_PATH)/modules/aes-ce-blk.ko:$(TARGET_COPY_OUT_VENDOR)/lib/aes-ce-blk.ko \
     $(LOCAL_PATH)/modules/aes-ce-ccm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/aes-ce-ccm.ko \
     $(LOCAL_PATH)/modules/aes-ce-cipher.ko:$(TARGET_COPY_OUT_VENDOR)/lib/aes-ce-cipher.ko \
@@ -123,6 +157,14 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/ath.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ath.ko \
     $(LOCAL_PATH)/modules/ath10k_core.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ath10k_core.ko \
     $(LOCAL_PATH)/modules/ath10k_pci.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ath10k_pci.ko \
+    $(LOCAL_PATH)/modules/bluetooth.ko:$(TARGET_COPY_OUT_VENDOR)/lib/bluetooth.ko \
+    $(LOCAL_PATH)/modules/bnep.ko:$(TARGET_COPY_OUT_VENDOR)/lib/bnep.ko \
+    $(LOCAL_PATH)/modules/btbcm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/btbcm.ko \
+    $(LOCAL_PATH)/modules/btintel.ko:$(TARGET_COPY_OUT_VENDOR)/lib/btintel.ko \
+    $(LOCAL_PATH)/modules/btmtk.ko:$(TARGET_COPY_OUT_VENDOR)/lib/btmtk.ko \
+    $(LOCAL_PATH)/modules/btqca.ko:$(TARGET_COPY_OUT_VENDOR)/lib/btqca.ko \
+    $(LOCAL_PATH)/modules/btrtl.ko:$(TARGET_COPY_OUT_VENDOR)/lib/btrtl.ko \
+    $(LOCAL_PATH)/modules/btusb.ko:$(TARGET_COPY_OUT_VENDOR)/lib/btusb.ko \
     $(LOCAL_PATH)/modules/ccm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ccm.ko \
     $(LOCAL_PATH)/modules/cfg80211.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cfg80211.ko \
     $(LOCAL_PATH)/modules/cmac.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cmac.ko \
@@ -131,9 +173,12 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/cros_ec_sensors.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cros_ec_sensors.ko \
     $(LOCAL_PATH)/modules/cros_ec_sensors_core.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cros_ec_sensors_core.ko \
     $(LOCAL_PATH)/modules/drm_shmem_helper.ko:$(TARGET_COPY_OUT_VENDOR)/lib/drm_shmem_helper.ko \
+    $(LOCAL_PATH)/modules/ecc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ecc.ko \
+    $(LOCAL_PATH)/modules/ecdh_generic.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ecdh_generic.ko \
     $(LOCAL_PATH)/modules/fuse.ko:$(TARGET_COPY_OUT_VENDOR)/lib/fuse.ko \
     $(LOCAL_PATH)/modules/gpio_keys.ko:$(TARGET_COPY_OUT_VENDOR)/lib/gpio_keys.ko \
     $(LOCAL_PATH)/modules/gpu-sched.ko:$(TARGET_COPY_OUT_VENDOR)/lib/gpu-sched.ko \
+    $(LOCAL_PATH)/modules/hidp.ko:$(TARGET_COPY_OUT_VENDOR)/lib/hidp.ko \
     $(LOCAL_PATH)/modules/i2c-hid-of.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid-of.ko \
     $(LOCAL_PATH)/modules/i2c-hid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid.ko \
     $(LOCAL_PATH)/modules/industrialio-triggered-buffer.ko:$(TARGET_COPY_OUT_VENDOR)/lib/industrialio-triggered-buffer.ko \
@@ -142,10 +187,12 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/lz4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/lz4.ko \
     $(LOCAL_PATH)/modules/mac80211.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mac80211.ko \
     $(LOCAL_PATH)/modules/panfrost.ko:$(TARGET_COPY_OUT_VENDOR)/lib/panfrost.ko \
+    $(LOCAL_PATH)/modules/rfcomm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfcomm.ko \
     $(LOCAL_PATH)/modules/rfkill.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfkill.ko \
     $(LOCAL_PATH)/modules/rk3399_dmc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rk3399_dmc.ko \
     $(LOCAL_PATH)/modules/rockchip-dfi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-dfi.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \
+    $(LOCAL_PATH)/modules/uhid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uhid.ko \
     $(LOCAL_PATH)/modules/zram.ko:$(TARGET_COPY_OUT_VENDOR)/lib/zram.ko
 
 include $(LOCAL_PATH)/modules.mk

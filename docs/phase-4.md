@@ -173,7 +173,7 @@
     1. **VINTF 缺少 `android.hardware.wifi.IWifi/default`（第 6592 行）**：`bootlog22.txt` 记录 `servicemanager: Caller(pid=3414,uid=1000,sid=u:r:system_server:s0) Could not find android.hardware.wifi.IWifi/default in the VINTF manifest`，而仅找到了 `ISupplicant/default`。原因是 `device/mainline/common` 默认只打包了 `com.android.hardware.wpa_supplicant` APEX，**没有包含 `android.hardware.wifi-service`（AIDL Vendor Wi-Fi HAL）**，且 APEX 版的 `wpa_supplicant` 只从 `/apex/com.android.hardware.wpa_supplicant/etc/wifi/` 读取配置而忽略 `/vendor/etc/wifi/wpa_supplicant_overlay.conf`。若不参照 Trogdor 切换为 `legacy` 形态并补齐 `android.hardware.wifi-service`、`BOARD_WLAN_DEVICE := qcwcn` 与 `libcld80211`，即使内核加载了 `ath10k_pci.ko` 生成 `wlan0`，Android 框架也无法打开 Wi-Fi 开关。
     2. **恢复 `adbd` 时必须隔离 `/dev/usb-ffs/adb`（避免无 UDC 空转刷屏）**：Scarlet 的两路 Type-C 控制器在 `rk3399-gru.dtsi` / `rk3399-gru-chromebook.dtsi` 中均硬编码为 `dr_mode = "host"`，内核中无 UDC。`adbd`（`packages/modules/adb/daemon/main.cpp:259`）只要检测到 `/dev/usb-ffs/adb/ep0` 存在就会启动 `usb_init()` 线程死循环写入 functionfs 描述符（每秒刷屏 `read descriptors` / `bcdVersion`）。`init.mainline.usb.rc` 会在 `on early-boot` 无条件挂载 `/dev/usb-ffs/adb`；因此在第 5 步恢复 `adbd` 监听 TCP `5555` 端口的同时，必须设 `TARGET_USB_INIT_SCRIPT := none` 阻止挂载 `/dev/usb-ffs/adb`，使 `adbd` 纯净运行在 TCP/IP 模式。
 
-### 5. Wi-Fi（QCA6174 `ath10k_pci`）与无线 `adb`（2026-10-19）
+### 5. Wi-Fi（QCA6174 `ath10k_pci`）与无线 `adb`（2026-10-19，已完成并验证）
 
 - **固件与内核模块清单**：
   - 从机身 postmarketOS `/lib/firmware/ath10k/QCA6174/hw3.0/` 提取并解压 4 个固件文件放入 `device/google/gru/firmware/ath10k/QCA6174/hw3.0/`（安装至 `/vendor/firmware/ath10k/QCA6174/hw3.0/`）：`board-2.bin`（723 KB）、`board.bin`（8 KB）、`firmware-6.bin`（690 KB，`WLAN.RM.4.4.1-00309` API 6）、`firmware-4.bin`（717 KB）；配合 `wireless-regdb` 已安装的 `/vendor/firmware/regulatory.db` 与 `regulatory.db.p7s`。
@@ -191,6 +191,31 @@
   - 设置 `TARGET_USB_INIT_SCRIPT := none` 排除 `init.mainline.usb.rc`（不挂载 `/dev/usb-ffs/adb`，避免 `adbd` 启动 USB functionfs 线程触发内核每秒刷屏），移除 `init.gru.rc` 中旧的 `on property:init.svc.adbd=running stop adbd`，改为设置 `service.adb.tcp.port=5555` 并在 `on boot && property:service.adb.tcp.port=5555` 启动 `adbd`，连上局域网后可直接 `adb connect <平板IP>:5555`。
 - **构建产物**：
   - `out/target/product/gru/super.img` 大小 `1251934612` 字节，sha256 `00a872f695f2ee091496a310e8294d95ad4e82b7389fa3ec51dc2f476e1ea6fb`，已上传至 `10.0.0.133:/home/user/phase3/super.img` 并校验一致。
+- **实机无线 `adb` 直连验证与日志排查（`/tmp/adb_dmesg_step5.txt` 2022 行、`/tmp/adb_logcat_step5.txt` 23575 行）**：
+  - **无线 `adb` 双通道直连成功**：平板在 LineageOS 23.2 下同时支持 Android 16 原生 TLS 无线调试配对连接（`10.0.0.119:43583`，`TlsServer: Handshake succeeded` -> `adbd_wifi_secure_connect: connected`）与 `init.gru.rc` 预设的 TCP `5555` 端口 root 连接（`10.0.0.119:5555`），从此可直接在运行中的 Android 系统内抓取完整 `dmesg`、`logcat` 与 `dumpsys`，无需切回 postmarketOS 导出日志。由于 `TARGET_USB_INIT_SCRIPT := none` 阻止挂载 `/dev/usb-ffs/adb`，`dmesg` 中 USB `functionfs` / `bcdVersion` 报错为 **0 条**。
+  - **QCA6174 `ath10k_pci` 固件、驱动与硬件加密验证**：
+    - `early-init` 阶段 `ath10k_pci 0000:01:00.0` 一次成功加载 `/vendor/firmware/ath10k/QCA6174/hw3.0/` 下的 `firmware-6.bin`（`WLAN.RM.4.4.1-00309- api 6 features wowlan,ignore-otp,mfp crc32 0793bcf2`）与 `board-2.bin`（`board_file api 2 bmi_id N/A crc32 d2863f91`），启用 `hwcrypto 1`（`htt-ver 3.87 wmi-op 4 htt-op 3`）。
+    - `lsmod` 确认 `aes_ce_ccm`（`Used by 2`）与 `aes_ce_cipher`（`Used by 2`）被 `mac80211` 实际绑定并承载 ARMv8 硬件加速 WPA2-CCMP 加解密。
+  - **Wi-Fi AIDL HAL、`wpa_supplicant` 与 802.11ac 5 GHz 链路验证**：
+    - `servicemanager` 成功解析 `android.hardware.wifi.IWifi/default` 与 `android.hardware.wifi.supplicant.ISupplicant/default`；`WifiVendorHal`（`Vendor Hal started successfully`）与 `WifiNative`（`Successfully setup Iface:{Name=wlan0,Id=0,Type=STA_CONNECTIVITY}`）顺利拉起 `wlan0`。
+    - `cmd wifi status` 确认已关联 5 GHz 802.11ac AP（`SSID: "Not 6GHz"`, `Frequency: 5765MHz`, `RSSI: -22 dBm`, `Tx/Max Link speed: 866Mbps`, `retriedTxPackets: 0`, `lostTxPackets: 0`），同时拿到 IPv4（`10.0.0.119/24`）与 IPv6 地址，网络能力通过 `INTERNET & VALIDATED` 校验。
+  - **内置盘安全核对**：在 Android root shell 下直接执行 `sha256sum /dev/block/mmcblk1p1`，返回值仍为 `5c188eeb7a89fdb1bf442ccccd61a556ad5e232149454659853e7dee98f0068a`，eMMC 分毫未动。
+  - **日志中发现并顺手修掉的 2 处隐性问题**：
+    1. **`android.hardware.sensors-service.multihal` 启动瞬间纯虚函数竞态（`Pure virtual function called!`）**：`adb_logcat_step5.txt` 第 2296–2328 行记录 `vendor.sensors-hal-multihal`（`pid 3048`）在开机早期 `19:01:17.425` 触发了一次 `SIGABRT`（`Abort message: 'Pure virtual function called!'`），随后在 `19:01:20.853` 被 `init` 自动拉起（`pid 3416`）并正常工作（因此用户侧无感知，`dumpsys sensorservice` 中陀螺仪和加速度计均正常输出事件）。定位 `device/google/gru/hal/sensors/Sensor.cpp` 发现基类构造函数 `SensorBase::SensorBase()` 在第 65 行直接调用了 `mSensorThread.start()`，此时派生类 `HWSensorBase::HWSensorBase()` 尚未执行完毕、对象 `vptr` 仍指向 `SensorBase`（其中 `pollSensor()` 为纯虚函数 `__cxa_pure_virtual`），一旦新线程在派生类构造完成前被调度就会触发纯虚函数调用。已将 `mSensorThread.start()` 移至派生类构造函数 `HWSensorBase::HWSensorBase()` 末尾（完成 `mPollFdIio.fd` 打开与 `mSensorRawData.resize()` 之后），彻底消除该竞态。
+    2. **`gru-logcat.sh` 将 `HalDevMgr:I` 与 `WifiHAL:I` 镜像至 `/dev/kmsg` 导致 `dmesg` 周期性刷屏**：主线 `ath10k` 驱动仅声明单 `STA` 接口且不支持高通私有 logger nl80211 命令；Android 框架每 3 秒扫描检查是否可创建第二 `STA` 接口时，`HalDevMgr` 会打印 `I HalDevMgr: bestIfaceCreationProposal is null, requestIface=STA, existingIface=[name=wlan0 type=STA]`，`WifiHAL` 打印 `E WifiHAL : wifi_get_logger_supported_feature_set: Error -3 happened`。这两条日志本身不影响 Wi-Fi 功能，但 `gru-logcat.sh` 将它们实时写入 `/dev/kmsg` 会冲刷内核 `dmesg` 缓冲区。已在 `gru-logcat.sh` 中将过滤级别调整为 `HalDevMgr:W WifiHAL:S`。
+
+### 6. 蓝牙（QCA6174A USB `0cf3:e300` `btusb` 与 AIDL Bluetooth HAL）（2026-10-20）
+
+- **固件与内核模块清单**：
+  - 通过无线 `adb` 在运行中的 Android 平板上直接探测 USB 总线确认内置蓝牙控制器为 `1-1: 0cf3:e300`（QCA6174A Rome 3.2 USB），并从只读挂载的内置盘 `/lib/firmware/qca/` 提取并解压 QCA Rome USB 蓝牙固件放入 `device/google/gru/firmware/qca/`（安装至 `/vendor/firmware/qca/`）：`rampatch_usb_00000302.bin`（68 KB，`rome 0x302 build 0x3e8`）、`nvm_usb_00000302.bin`（2 KB）、`nvm_usb_00000302_eu.bin` 及同系列 `00000200` / `00000201` / `00000300` 固件。
+  - 从 `6.6.34-phase2` `modinstall` 提取蓝牙协议栈、控制器驱动及 BLE/HID 依赖模块共 13 个 `.ko` 放入 `/vendor/lib/`：`ecc.ko`、`ecdh_generic.ko`、`uhid.ko`、`bluetooth.ko`、`rfcomm.ko`、`bnep.ko`、`hidp.ko`、`btbcm.ko`、`btintel.ko`、`btrtl.ko`、`btmtk.ko`、`btqca.ko`、`btusb.ko`。
+  - 在实机上通过无线 `adb` 预演加载模块：`btusb` 一次成功匹配 `0cf3:e300` 并加载 `qca/rampatch_usb_00000302.bin` 与 `qca/nvm_usb_00000302.bin`，生成 `/sys/class/bluetooth/hci0`（硬件自带 OTP 公网 MAC `30:D1:6B:79:6B:36`，与 `wlan0` 的 `30:D1:6B:79:6B:35` 相邻）与 `rfkill1`（`type=bluetooth state=1`）。
+- **AIDL Bluetooth HAL、设备节点权限与 `com.android.bluetooth` 恢复**：
+  - 对照 `third_party/android_device_google_trogdor-lineage-24` 与 `device/mainline/common`：在 `device.mk` 中将 `TARGET_BLUETOOTH_HAL` 从 `none` 切换为 `default-aidl`，打包 `android.hardware.bluetooth-service.default`（提供 `android.hardware.bluetooth.IBluetoothHci/default` VINTF AIDL 服务，通过 `NetBluetoothMgmt` 管理 `rfkill` 与 `HCI_CHANNEL_USER` 套接字）、`bdaddr`（含 `set_bdaddr.sh`），并安装 `android.hardware.bluetooth.xml` 与 `android.hardware.bluetooth_le.xml` 权限声明。
+  - **修复 `/dev/rfkill` 与 `/dev/uhid` 权限隐患**：`vendor.bluetooth-default` 以 `uid=bluetooth (1002)` 运行并在 `openHci()` 中打开 `/dev/rfkill` 解除蓝牙软屏蔽，而内核 `rfkill.ko` 作为模块在 `early-init` 加载时 `/dev/rfkill` 默认是 `0600 root:root`；同时蓝牙键鼠/手柄 HID 协议栈需要读写 `/dev/uhid`（`uhid.ko`）。已在 `ueventd.gru.rc` 与 `init.gru.rc` 的 `on post-fs` 中双保险设置 `/dev/rfkill` 为 `0660 bluetooth:bluetooth`、`/dev/uhid` 为 `0660 uhid:uhid`。
+  - 在 `init.gru.rc` 中移除阶段 3 为无控制器状态临时添加的 `on property:init.svc.vendor.bluetooth-default=running stop vendor.bluetooth-default`，并在 `on property:sys.boot_completed=1` 中执行 `pm enable com.android.bluetooth`，自动解除保留 `userdata` 分区上此前持久化的 `com.android.bluetooth` 禁用状态。
+- **构建产物**：
+  - `out/target/product/gru/super.img` 大小 `1253228948` 字节，sha256 `439a268e8ddba98942b7b9414b233df2f18491bee382a300642738907a6e7a85`。
 
 ## 事件
 
@@ -203,3 +228,5 @@
 | 2026-10-19 | 阶段 4 第 3 项实机验证通过（`bootlog21.txt`）：Wacom 手写笔四个方向点击与悬停全部正常、自动旋转四个方向流畅且帧率一致、「设置 -> 存储」正常打开；同时定位了缺少虚拟导航栏、软键盘不弹出、「设置 -> 声音 / 无障碍」因缺蓝牙声明触发 NPE 等问题，排入第 4 步（背光调节）一并修复。 |
 | 2026-10-19 | 完成阶段 4 第 4 项（背光滑块线性化校正、虚拟导航栏 Overlay、软键盘 `cros_ec.kl` 修复、「设置 -> 声音 / 无障碍」NPE 修复）构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `0d9351346989a5326707f5fb777c5c34a04c1c01ebae156badbb682e6f5e5146`（`1249522068` 字节）。 |
 | 2026-10-19 | 阶段 4 第 4 项实机验证通过（`bootlog22.txt`）：下拉菜单亮度滑块全程线性调节、三键与手势虚拟导航栏正常、屏幕虚拟键盘正常弹出、「设置 -> 隐私」与「设置 -> 无障碍」不再闪退；同时从日志发现 VINTF 缺少 `IWifi/default` 及 `adbd` 需隔离 `/dev/usb-ffs/adb`，并完成阶段 4 第 5 项（QCA6174 `ath10k_pci` 固件与 13 个无线/加密模块、`android.hardware.wifi-service`、nl80211 `wpa_supplicant`、TCP `5555` 无线 `adb`）构建与上传（新 `super.img` 校验和 `00a872f695f2ee091496a310e8294d95ad4e82b7389fa3ec51dc2f476e1ea6fb`，`1251934612` 字节）。 |
+| 2026-10-19 | 阶段 4 第 5 项实机验证通过（通过无线 `adb` 直接拉取 `adb_dmesg_step5.txt` 与 `adb_logcat_step5.txt`）：QCA6174 `ath10k_pci` 802.11ac 5 GHz 联网满速（866 Mbps，0 丢包，IPv4/IPv6 双栈 `INTERNET & VALIDATED`），无线 `adb`（TLS 端口与 TCP `5555` root 端口）直连稳定且无 USB functionfs 报错；同时从日志排查并修复了 `SensorBase` 构造函数过早启动线程导致的开机单次纯虚函数崩溃竞态与 `gru-logcat.sh` 中 `HalDevMgr` 刷屏 `dmesg` 的问题。 |
+| 2026-10-20 | 完成阶段 4 第 6 项（蓝牙：QCA6174A USB `0cf3:e300` `qca/rampatch_usb_00000302.bin` 与 `nvm_usb_00000302.bin` 固件、`btusb.ko` 等 13 个蓝牙/加密/UHID 模块、`android.hardware.bluetooth-service.default` AIDL HAL、`/dev/rfkill` 与 `/dev/uhid` 权限及 `pm enable com.android.bluetooth`）构建：新 `super.img` 校验和 `439a268e8ddba98942b7b9414b233df2f18491bee382a300642738907a6e7a85`（`1253228948` 字节）。 |

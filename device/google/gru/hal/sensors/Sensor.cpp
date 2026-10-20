@@ -61,8 +61,6 @@ SensorBase::SensorBase(int32_t sensorHandle, ISensorsEventCallback* callback, Se
             ALOGE("unsupported sensor type %d", type);
             break;
     }
-
-    mSensorThread.start();
 }
 
 SensorBase::~SensorBase() {
@@ -540,6 +538,7 @@ HWSensorBase::HWSensorBase(int32_t sensorHandle, ISensorsEventCallback* callback
     }
     mPollFdIio.events = POLLIN;
     mSensorRawData.resize(mScanSize);
+    mSensorThread.start();
 }
 
 }  // namespace implementation

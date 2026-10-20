@@ -1,3 +1,10 @@
+# Bluetooth rfkill & uhid
+/dev/rfkill                                                                 0660   bluetooth  bluetooth
+/dev/uhid                                                                   0660   uhid       uhid
+
+# DMA-BUF CMA heap
+/dev/dma_heap/reserved                                                      0444   system     system
+
 # IIO sensors (cros-ec-accel, cros-ec-gyro)
 /dev/iio:device*                                                            0660   system     system
 /sys/bus/iio/devices/iio:device* buffer/enable                              0660   system     system

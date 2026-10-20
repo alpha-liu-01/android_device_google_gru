@@ -42,6 +42,19 @@ on early-init
     insmod /vendor/lib/ath.ko
     insmod /vendor/lib/ath10k_core.ko
     insmod /vendor/lib/ath10k_pci.ko
+    insmod /vendor/lib/ecc.ko
+    insmod /vendor/lib/ecdh_generic.ko
+    insmod /vendor/lib/uhid.ko
+    insmod /vendor/lib/bluetooth.ko
+    insmod /vendor/lib/rfcomm.ko
+    insmod /vendor/lib/bnep.ko
+    insmod /vendor/lib/hidp.ko
+    insmod /vendor/lib/btbcm.ko
+    insmod /vendor/lib/btintel.ko
+    insmod /vendor/lib/btrtl.ko
+    insmod /vendor/lib/btmtk.ko
+    insmod /vendor/lib/btqca.ko
+    insmod /vendor/lib/btusb.ko
     # usbdrd_dwc3_0 is dr_mode=host, so there is no UDC. The gadget HAL
     # aborts when sys.usb.controller is empty. init.mainline.usb.rc would
     # otherwise set configfs to 2 and restart that HAL forever.
@@ -78,6 +91,19 @@ on post-fs
     chmod 000 /sys/power/state
     write /sys/class/vtconsole/vtcon0/bind 0
     write /sys/class/vtconsole/vtcon1/bind 0
+    chown bluetooth bluetooth /dev/rfkill
+    chmod 0660 /dev/rfkill
+    chown uhid uhid /dev/uhid
+    chmod 0660 /dev/uhid
+    # 6.6.34-phase2 builds CONFIG_DMABUF_HEAPS_CMA=y (/dev/dma_heap/reserved,
+    # 253:0) without CONFIG_DMABUF_HEAPS_SYSTEM. Codec2 (debug.c2.use_dmabufheaps=1)
+    # opens /dev/dma_heap/system; expose the same char node with system_heap label.
+    chown system system /dev/dma_heap/reserved
+    chmod 0444 /dev/dma_heap/reserved
+    exec - root root -- /system/bin/mknod /dev/dma_heap/system c 253 0
+    chown system system /dev/dma_heap/system
+    chmod 0444 /dev/dma_heap/system
+    restorecon /dev/dma_heap/system
     chown system system /dev/iio:device0
     chmod 0660 /dev/iio:device0
     chown system system /sys/bus/iio/devices/iio:device0/buffer/enable
@@ -116,6 +142,14 @@ on post-fs
     chmod 0660 /sys/bus/iio/devices/iio:device1/scan_elements/in_timestamp_en
 
 on zygote-start
+    # Phase 3 ran `pm disable com.android.bluetooth`, which persisted
+    # COMPONENT_ENABLED_STATE_DISABLED into user 0's package-restrictions.xml.
+    # BluetoothComponent.<init> runs inside SystemServer.startOtherServices()
+    # before sys.boot_completed=1 and throws IllegalStateException if
+    # com.android.bluetooth is disabled, causing a system_server crash loop.
+    rm /data/system/users/0/package-restrictions.xml
+    rm /data/system/users/0/package-restrictions-backup.xml
+    rm /data/system/users/0/package-restrictions.xml.reservecopy
     mkdir /data/vendor/wifi 0770 wifi wifi
     mkdir /data/vendor/wifi/wpa 0770 wifi wifi
     mkdir /data/vendor/wifi/wpa/sockets 0770 wifi wifi
@@ -128,6 +162,7 @@ on boot && property:service.adb.tcp.port=5555
 # Console loglevel 7 would paint kernel warnings back onto the panel if
 # fbcon is still bound. kmsg itself is unchanged.
 on property:sys.boot_completed=1
+    exec_background - root root -- /system/bin/pm enable com.android.bluetooth
     exec_background - root root -- /system/bin/settings put system screen_off_timeout 86400000
     exec_background - root root -- /system/bin/settings put secure show_ime_with_hard_keyboard 1
     write /proc/sys/kernel/printk "3 4 1 3"
@@ -136,11 +171,6 @@ on property:sys.boot_completed=1
 # never registered, and usbd retries it on every boot.
 on property:init.svc.usbd=running
     stop usbd
-
-# No Bluetooth controller. The HAL aborts in initializationComplete and on
-# FD_SET(-1), and init keeps restarting it.
-on property:init.svc.vendor.bluetooth-default=running
-    stop vendor.bluetooth-default
 
 service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
                        -O/data/vendor/wifi/wpa/sockets \

@@ -24,6 +24,7 @@ on early-init
     insmod /vendor/lib/cros-ec-sensorhub.ko
     insmod /vendor/lib/cros_ec_sensors_core.ko
     insmod /vendor/lib/cros_ec_sensors.ko
+    insmod /vendor/lib/cros_usbpd-charger.ko
     insmod /vendor/lib/lz4.ko
     insmod /vendor/lib/zram.ko
     insmod /vendor/lib/drm_shmem_helper.ko

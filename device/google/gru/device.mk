@@ -181,6 +181,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/cros-ec-sensorhub.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cros-ec-sensorhub.ko \
     $(LOCAL_PATH)/modules/cros_ec_sensors.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cros_ec_sensors.ko \
     $(LOCAL_PATH)/modules/cros_ec_sensors_core.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cros_ec_sensors_core.ko \
+    $(LOCAL_PATH)/modules/cros_usbpd-charger.ko:$(TARGET_COPY_OUT_VENDOR)/lib/cros_usbpd-charger.ko \
     $(LOCAL_PATH)/modules/drm_shmem_helper.ko:$(TARGET_COPY_OUT_VENDOR)/lib/drm_shmem_helper.ko \
     $(LOCAL_PATH)/modules/ecc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ecc.ko \
     $(LOCAL_PATH)/modules/ecdh_generic.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ecdh_generic.ko \

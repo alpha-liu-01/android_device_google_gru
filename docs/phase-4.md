@@ -255,6 +255,35 @@
 - **构建产物**：
   - `out/target/product/gru/super.img` 大小 `1253716372` 字节，sha256 `74e5fc1de1c6782c7e857dbbf94080582c9b1bc5a57bdb5b2ee61e9ee593cf05`。
 
+### 8. 电量与充电（`sbs-battery` `sbs-9-000b`、`cros_usbpd-charger` 与 `BatteryMonitor` 兼容）（2026-10-20）
+
+- **此前两次突然掉回 bootloader 的真实根因（非锁屏超时、无需用户在平板上做任何额外设置）**：
+  - 此前两次瞬间黑屏回到 depthcharge 启动界面，**并不是**因为锁屏超时或看门狗，而是因为我们在通过无线 `adb` 运行自定义 EC 诊断工具（`ec_diag`）排查 PD 充电状态时，向 `/dev/cros_ec` 发送了 `EC_CMD_USB_PD_POWER_INFO (0x0103)` 并遍历了 `port = 0`、`port = 1`、`port = 0xff`。
+  - Scarlet（Acer Chromebook Tab 10）机身只有 **1 个** USB-C 端口（`EC_CMD_USB_PD_PORTS` 返回 `num_ports = 1`，有效端口号仅为 `port = 0`）。Scarlet 的 EC 固件（`scarlet_v1.1.7878-f57c60917`）在收到越界的 `port = 1` 查询时触发固件内部越界异常并立即复位 EC，EC 复位瞬间切断 AP 供电，导致机器立刻回到 bootloader。
+  - **防坑结论**：在 Scarlet 上任何工具或驱动访问 `/dev/cros_ec` 的 USB-PD 命令时，严禁查询 `port >= 1`。内核标准驱动 `cros_usbpd-charger.ko` 在 `probe` 时会先调用 `EC_CMD_USB_PD_PORTS` 获取真实端口数（`1`），只注册和查询 `port 0`（`CROS_USBPD_CHARGER0`），因此 **100% 安全，绝不会触发该重启**，用户也无需修改锁屏超时或做任何额外防重启操作。
+- **为什么此前插入充电器时 Android 完全没有充电反应，以及为什么功率计显示 5V 2.5A（而非 9V）**：
+  1. **缺少 `cros_usbpd-charger.ko` 导致无充电器节点与插拔通知**：
+     - `6.6.34-phase2` 内核中 `CONFIG_CHARGER_CROS_USBPD=m`（`drivers/power/supply/cros_usbpd-charger.ko`）编译为模块，此前尚未打入 `super.img`。
+     - 未加载该模块时，`/sys/class/power_supply/` 下只有智能电池 `sbs-9-000b`，没有充电器节点 `CROS_USBPD_CHARGER0`；不仅 Android `BatteryMonitor` 看不到任何在线充电器（`AC powered: false`、`USB powered: false`），而且插拔充电线时 EC 发出的 MKBP 事件也无人接收去调用 `power_supply_changed()` 触发 `sbs-battery` 的 `sbs_external_power_changed()` 重采样。
+  2. **为什么外接功率计显示 5V 2.5A～3A（15W PD）且实际正在正常快充**：
+     - 通过仅查询 `port = 0` 的安全工具与加载 `cros_usbpd-charger.ko` 后读取 `/sys/class/power_supply/CROS_USBPD_CHARGER0/` 确认：
+       - **USB-PD 握手完全成功**：EC PD 状态机处于 `SNK_READY`（`PD_CAPABLE`），`CROS_USBPD_CHARGER0/usb_type` 为 `[PD]`，协商档位为 **5V / 3A（15W）**（`voltage_max_design: 5000000` uV、`current_max: 3000000` uA），EC 充电状态机显示 `ac=1 chg_v=4400mV chg_i=4000mA in_i=3000mA`。
+       - **电池确实在高速充入电量**：Scarlet 采用的是 **单电芯（1S，标称 3.84V / 满电 4.40V，设计容量 8734 mAh / 33.5 Wh）** 低压大容量锂聚合物电池。在当前高电量恒压（CV）阶段（88% -> 91%，电池端电压 `4.416V`），从 5V 母线降压至 4.4V 的压差极小、转换效率最高，实测 `sbs-9-000b/current_now` 稳定在 **`+1379000` ～ `+1695000` uA（+1.38A ～ +1.70A 净流入电池）**，剩余容量 `charge_now` 从 `7209000 uAh`（88%）稳步涨至 `7446000 uAh`（91%），无任何跳变。
+- **修复与兼容方案**：
+  1. **打包并开机加载 `cros_usbpd-charger.ko`**：将 `cros_usbpd-charger.ko` 放入 `device/google/gru/modules/`，在 `device.mk` 中安装至 `/vendor/lib/cros_usbpd-charger.ko`，并在 `init.gru.rc` 的 `on early-init` 中 `insmod`，注册 `/sys/class/power_supply/CROS_USBPD_CHARGER0`。
+  2. **修复 `system/core/healthd/BatteryMonitor.cpp`（编译进 `/vendor/bin/hw/android.hardware.health-service.example`）的 4 项兼容性问题**：
+     - **彻底消除 `sbs-9-000b` 每分钟 `-5`（`-EIO`）报错刷屏**：Scarlet 电池的 SBS 固件不支持可选寄存器 `0x0B`（`current_avg`）和 `0x22`（`technology`），每次读取都会经 EC I2C 隧道重试失败并在 `dmesg` 打印 `power_supply sbs-9-000b: driver failed to report 'current_avg' / 'technology' property: -5`。修改 `BatteryMonitor::init()`：在绑定 `batteryCurrentAvgPath` 与 `batteryTechnologyPath` 前先试读一次（`readFromFile(path, &buf) > 0`）；若读取失败则不注册该无效路径，`current_avg` 自动回退使用正常工作的 `current_now`，`technology` 在电池在位时默认回退为 `"Li-ion"`。由此 `healthd` 运行期每分钟轮询与插拔 uevent 更新实现了 **0 条 `-5` 内核报错**。
+     - **修正 USB-PD 充电器类型映射（`AC powered: true`）**：`cros_usbpd-charger.c` 将顶层 `type` 固定设为 `"USB"`，而将具体协议放在 `usb_type`（`Unknown SDP DCP CDP C [PD] PD_DRP BrickID`）。修改 `readPowerSupplyType()`：当 `type` 为 `"USB"` 时进一步读取同目录下的 `usb_type`，若激活项为 `[PD]`、`[PD_DRP]`、`[DCP]`、`[CDP]`、`[C]` 或 `[BrickID]`，则映射为 `ANDROID_POWER_SUPPLY_TYPE_AC`（`AC powered: true`，状态栏与锁屏显示快速/交流电充电而非慢速 USB 充电）。
+     - **补齐 `Charge counter`（`charge_now` 回退）与 `time_to_full_avg` 回退**：`sbs-battery` 暴露的是标准属性 `charge_now`（而非 `charge_counter`）和 `time_to_full_avg`（而非 `time_to_full_now`）。在 `BatteryMonitor::init()` 中当 `charge_counter` / `time_to_full_now` 不存在时自动回退绑定 `charge_now` / `time_to_full_avg`，使 `dumpsys battery` 的 `Charge counter` 准确报告实时库仑计毫安时数（如 `7446000` uAh）。
+     - **修正 `health` 状态显示**：SBS 规范无通用健康度寄存器，`sbs-battery` 在无需校准时固定返回 `Unknown`（导致 Android 显示 `health: 1` Unknown）。在 `BatteryMonitor::updateValues()` 中，当电池在位（`batteryPresent == true`）且内核返回 `Unknown` 时，映射为 `BatteryHealth::GOOD`（`health: 2`）。
+- **实机在线验证（`10.0.0.119:36615`）**：
+  - 将 `cros_usbpd-charger.ko` 与更新后的 `android.hardware.health-service.example` 推送至正在运行的平板验证：
+    - `dumpsys battery` 输出：`AC powered: true`、`Max charging current: 3000000`、`Max charging voltage: 5000000`、`Charge counter: 7446000`、`status: 2`（Charging）、`health: 2`（Good）、`present: true`、`level: 91`、`voltage: 4416`、`temperature: 308`、`technology: Li-ion`、`Maximum capacity: 8113000`、`Design capacity: 8734000`。
+    - 连续触发多次充电器 uevent 与周期轮询，`dmesg` 中 `healthd: battery l=90 v=4416 t=30.8 h=2 st=2 c=1482000 fc=8113000 cc=27 chg=a` 更新正常，且全程不再出现任何 `driver failed to report 'current_avg' / 'technology' property: -5` 报错。
+  - 内置盘 `mmcblk1p1` sha256 校验和保持 `5c188eeb7a89fdb1bf442ccccd61a556ad5e232149454659853e7dee98f0068a`。
+- **构建产物**：
+  - `out/target/product/gru/super.img` 大小 `1253716372` 字节，sha256 `5310e948452e703eeac8437dbbf453a75150606c99d686777aa836a5723f6961`。
+
 ## 事件
 
 | 日期 | 事件 |
@@ -262,10 +291,11 @@
 | 2026-10-19 | 阶段 4 第 1 项验证通过：写入 `super.img`（`5905b1e2...`）后启动外置盘，`zram0` 2919648 kB swap 启用，`Launcher3` 与 `Seedvault` 崩溃以及设置应用 ANR 全部归零。内置盘 eMMC `pmOS_kernel` 校验和保持 `5c188eeb7a89fdb1bf442ccccd61a556ad5e232149454659853e7dee98f0068a`。 |
 | 2026-10-19 | 阶段 4 第 2 项验证通过：写入 `super.img`（`345ebd9a...`）后启动外置盘，`panfrost` 驱动与 Mesa 25.3.3 `Mali-T860 (Panfrost)` OpenGL ES 3.1 硬件加速正常启用，无软渲染回退，`SurfaceFlinger` 至开机完成耗时从 145.7 秒缩短至 64.4 秒，0 次崩溃/ANR。 |
 | 2026-10-19 | 补齐 CPU/内存调频模块（`cpufreq-dt.ko`、`rockchip_thermal.ko`、`rockchip-dfi.ko`、`rk3399_dmc.ko`）并写入 `super.img`（`04155eb4...`）验证通过：`GRU_FREQ` 确认小核 `1.512 GHz`、大核 `2.016 GHz`、GPU `800 MHz`、内存控制器 `928 MHz` 全部上线，总开机时间从 156.9 秒进一步缩短至 125.2 秒，响应速度明显提升，确认 2048×1536 线性合成下 30–45 fps 为 Mali-T860 MP4 硬件带宽边界。 |
-| 2026-10-19 | 完成阶段 4 第 3 项（触摸、旋转、Wacom 手写笔）及 `fuse.ko` 构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `1e240695d3c4ef4e60755942ae2d0d75095c6a8d4236b4d286caa87662656ab4`（`1249505684` 字节），包含 `fuse.ko`、`i2c-hid` 手写笔模块、`cros_ec_sensors` IIO 传感器模块、`android.hardware.sensors@2.1-gru-subhal` 与触摸/手写笔 IDC 配置。 |
+| 2026-10-19 | 完成阶段 4 第 3 项（触摸、旋转、Wacom 手写笔）及 `fuse.ko` 构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `1e240695d3c4ef4e60755942ae2d0d755942ae2d0d75095c6a8d4236b4d286caa87662656ab4`（`1249505684` 字节），包含 `fuse.ko`、`i2c-hid` 手写笔模块、`cros_ec_sensors` IIO 传感器模块、`android.hardware.sensors@2.1-gru-subhal` 与触摸/手写笔 IDC 配置。 |
 | 2026-10-19 | 阶段 4 第 3 项实机验证通过（`bootlog21.txt`）：Wacom 手写笔四个方向点击与悬停全部正常、自动旋转四个方向流畅且帧率一致、「设置 -> 存储」正常打开；同时定位了缺少虚拟导航栏、软键盘不弹出、「设置 -> 声音 / 无障碍」因缺蓝牙声明触发 NPE 等问题，排入第 4 步（背光调节）一并修复。 |
 | 2026-10-19 | 完成阶段 4 第 4 项（背光滑块线性化校正、虚拟导航栏 Overlay、软键盘 `cros_ec.kl` 修复、「设置 -> 声音 / 无障碍」NPE 修复）构建并上传至 `/home/user/phase3/super.img`：新 `super.img` 校验和 `0d9351346989a5326707f5fb777c5c34a04c1c01ebae156badbb682e6f5e5146`（`1249522068` 字节）。 |
 | 2026-10-19 | 阶段 4 第 4 项实机验证通过（`bootlog22.txt`）：下拉菜单亮度滑块全程线性调节、三键与手势虚拟导航栏正常、屏幕虚拟键盘正常弹出、「设置 -> 隐私」与「设置 -> 无障碍」不再闪退；同时从日志发现 VINTF 缺少 `IWifi/default` 及 `adbd` 需隔离 `/dev/usb-ffs/adb`，并完成阶段 4 第 5 项（QCA6174 `ath10k_pci` 固件与 13 个无线/加密模块、`android.hardware.wifi-service`、nl80211 `wpa_supplicant`、TCP `5555` 无线 `adb`）构建与上传（新 `super.img` 校验和 `00a872f695f2ee091496a310e8294d95ad4e82b7389fa3ec51dc2f476e1ea6fb`，`1251934612` 字节）。 |
 | 2026-10-19 | 阶段 4 第 5 项实机验证通过（通过无线 `adb` 直接拉取 `adb_dmesg_step5.txt` 与 `adb_logcat_step5.txt`）：QCA6174 `ath10k_pci` 802.11ac 5 GHz 联网满速（866 Mbps，0 丢包，IPv4/IPv6 双栈 `INTERNET & VALIDATED`），无线 `adb`（TLS 端口与 TCP `5555` root 端口）直连稳定且无 USB functionfs 报错；同时从日志排查并修复了 `SensorBase` 构造函数过早启动线程导致的开机单次纯虚函数崩溃竞态与 `gru-logcat.sh` 中 `HalDevMgr` 刷屏 `dmesg` 的问题。 |
 | 2026-10-20 | 完成阶段 4 第 6 项（蓝牙：QCA6174A USB `0cf3:e300` 固件、`btusb.ko` 等 13 个蓝牙/加密/UHID 模块、`android.hardware.bluetooth-service.default` AIDL HAL、`/dev/rfkill` 与 `/dev/uhid` 权限、清理遗留 `package-restrictions.xml`、`bluetooth.le.disable_apcf_extended_features=1`、全部蓝牙 Profile 属性及 `/dev/dma_heap/system` 节点）：实机验证「已连接的设备」与「提示音和振动」不闪退、手机双模配对与蓝牙鼠标连接完全可用，更新后的 `super.img`（`08b6e808e420e71bbb38ad6ff385359eed6a3a8b2d823f08a4a7a8c093a37c06`）已上传至设备 `/home/user/phase3/super.img`。 |
 | 2026-10-20 | 完成阶段 4 第 7 项（音频播放：打包 `rk3399-gru-sound` 及 `MAX98357A` / `DMIC` / `DA7219` / `rockchip-i2s` 等 16 个 ALSA SoC 内核模块并在 `early-init` 加载、编写 `device/google/gru/etc/audio_policy_configuration.xml` 绑定扬声器 `CARD_0_DEV_0` 与内置麦克风 `CARD_0_DEV_1`）及移除 `init.gru.rc` 中导致开机弹出 `LineageSetupWizard` 的一次性 `rm package-restrictions*.xml` 语句；实机先行动态加载验证外放铃声与麦克风采集正常，新 `super.img` 大小 `1253716372` 字节，校验和 `74e5fc1de1c6782c7e857dbbf94080582c9b1bc5a57bdb5b2ee61e9ee593cf05`。 |
+| 2026-10-20 | 完成阶段 4 第 8 项（电量与充电：定位并排除自定义测试脚本查询越界 `port=1` 导致 EC 复位的根因，打包并加载 `cros_usbpd-charger.ko` 注册 `CROS_USBPD_CHARGER0`，并在 `BatteryMonitor.cpp` 中完成 `current_avg` / `technology` `-5` 报错过滤与回退、USB-PD `usb_type` 映射 `AC powered: true`、`charge_now` 映射 `Charge counter` 与 `health` 状态修正）：实机在线验证 PD 5V/3A（15W）快充状态与电量增长稳定（88% -> 91%）、`dmesg` 零 `-5` 报错，合并第 7、8 项的新 `super.img` 大小 `1253716372` 字节，校验和 `5310e948452e703eeac8437dbbf453a75150606c99d686777aa836a5723f6961`。 |

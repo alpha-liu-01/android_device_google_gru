@@ -131,6 +131,7 @@ on fs
 # composer finds no pipeline and stays headless, and the panel keeps the
 # last console frame. Unbind here, before that class starts.
 on post-fs
+    exec_start expand_userdata
     write /sys/class/vtconsole/vtcon0/bind 0
     write /sys/class/vtconsole/vtcon1/bind 0
     chown bluetooth bluetooth /dev/rfkill
@@ -209,6 +210,14 @@ service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
     disabled
     oneshot
     user root
+
+service expand_userdata /system/bin/sh /vendor/bin/expand_userdata.sh
+    class core
+    user root
+    group root system
+    disabled
+    oneshot
+    seclabel u:r:init:s0
 
 # system_server's Java exception never reaches kmsg by itself. The script
 # keeps a copy on /data and mirrors the same lines to kmsg one at a time.

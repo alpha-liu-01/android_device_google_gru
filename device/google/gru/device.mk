@@ -107,6 +107,7 @@ PRODUCT_VENDOR_PROPERTIES += \
 
 FORCE_USE_ANDROIDMK_FOR_WPA_CONF := true
 PRODUCT_PACKAGES += \
+    blkpg_resize \
     hwservicemanager \
     mapper.minigbm_upstream \
     android.hardware.bluetooth-service.default \
@@ -171,6 +172,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/fstab.gru:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.gru \
     $(LOCAL_PATH)/init.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.gru.rc \
     $(LOCAL_PATH)/ueventd.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.gru.rc \
+    $(LOCAL_PATH)/scripts/expand_userdata.sh:$(TARGET_COPY_OUT_VENDOR)/bin/expand_userdata.sh \
     $(LOCAL_PATH)/gru-logcat.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gru-logcat.sh \
     $(LOCAL_PATH)/firmware/rockchip/dptx.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/rockchip/dptx.bin \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board-2.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board-2.bin \

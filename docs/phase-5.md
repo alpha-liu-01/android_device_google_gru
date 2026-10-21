@@ -105,15 +105,16 @@ Yajat Kumar 在 Google Trogdor Chromebook 的 LineageOS 23.2 / 24 发布中采�
 - **但在 Gru 上**：我们的 `fstab.gru` 为 `/data` 配置了 `first_stage_mount`（因为早期的阶段 3 调试发现 `latemount` 会导致 `/data` 状态异常），且 `init.gru.rc` 在 `on fs` 阶段就执行了 `mount_all`。这意味着到了 `on post-fs` 阶段，**`/data` 已经处于挂载（mounted）状态**！此时直接运行 `resize.f2fs` 会因设备已挂载（`Device is mounted`）而拒绝执行。
 
 **Gru 的解决方案（双保险设计）**：
-1. **分区分辨与安全锁**：脚本只操作 `fe320000.mmc`（外置 microSD 卡控制器）下的 `userdata` 分区（`/dev/block/by-name/userdata` 指向的 `/dev/block/mmcblkXp6`），绝不触碰 `fe330000.sdhci`（内置 eMMC）。
-2. **GPT 扩容与内核在线通知**：
-   - 当检测到 `userdata` 当前扇区数小于磁盘剩余可用扇区数（差值 > 16 MiB）时，依次执行：
+1. **分区分辨与安全锁**：脚本只操作 `fe320000.mmc`（外置 microSD 卡控制器）下的 `userdata` 分区（`/dev/block/by-name/userdata` 指向的 `/dev/block/mmcblkXp6`），并通过检查 `/sys/class/block/mmcblkX` 的控制器物理路径严格拒绝任何针对 `fe330000.sdhci`（内置 eMMC）的操作。
+2. **安全卸载与 GPT 扩容、内核在线通知**：
+   - 当检测到 `userdata` 当前扇区数小于磁盘剩余可用扇区数（差值 > 16 MiB）时，首先检查 `/data` 是否已在 `first_stage_mount` 中挂载；若已挂载（此时处于 `on post-fs` 极早期，`vold` 尚未加密初始化且 `early_hal` / `post-fs-data` 尚未触发，无进程占用 `/data`），先执行 `umount /data` 临时卸载。
+   - 随后依次执行：
      1. `/system/bin/sgdisk --move-second-header /dev/block/mmcblkX`（将备份 GPT 表移至物理 SD 卡最末端）
      2. 读取原分区 `PARTUUID` 并执行 `/system/bin/sgdisk --delete=6 --new=6:${START}:0 --partition-guid=6:${PARTUUID} --change-name=6:userdata /dev/block/mmcblkX`
      3. 调用 `/vendor/bin/blkpg_resize`（通过 `BLKPG_RESIZE_PARTITION` ioctl）实时更新 Linux 内核中的 `mmcblkXp6` 分区大小，无需重启。
-3. **文件系统扩容（支持已挂载 F2FS 在线扩容 + 卸载离线扩容回退）**：
-   - Linux 6.6 的 F2FS 驱动原生支持 **`F2FS_IOC_RESIZE_FS` 在线扩容 ioctl**（无需卸载 `/data` 即可瞬间将已挂载的 F2FS 文件系统扩展至新分区大小）！
-   - 我们在 `blkpg_resize` 工具中同时集成 `F2FS_IOC_RESIZE_FS`（或若在 `mount_all` 之前执行则调用 `/system/bin/resize.f2fs`），确保无论 `/data` 是否已挂载，首次开机都能 100% 完成无损扩容，且无需二次重启。
+3. **F2FS 离线无损扩容与重新挂载**：
+   - 注意：Linux 6.6 内核中的 `F2FS_IOC_RESIZE_FS` ioctl 仅支持缩容（`if (block_count > old_block_count) return -EINVAL;`），F2FS 扩容必须通过用户态 `/system/bin/resize.f2fs` 在未挂载状态下完成。
+   - 因此在 `blkpg_resize` 更新内核分区大小后，脚本直接调用 `/system/bin/resize.f2fs` 将 F2FS 扩展至整卡末端，最后按原挂载参数重新 `mount -t f2fs` 挂载 `/data`，后续 `post-fs-data` 与 FBE 加密流程完全无感衔接，首次开机即可 100% 完成无损扩容且无需二次重启。
 
 ### 4.4 差异四：硬件隔离保障（100% 保护内置 eMMC 上的 postmarketOS）
 
@@ -160,4 +161,5 @@ Yajat Kumar 在 Google Trogdor Chromebook 的 LineageOS 23.2 / 24 发布中采�
 | 日期 | 阶段 | 完成内容 |
 | :--- | :--- | :--- |
 | 2026-10-21 | **步骤 1（已完成）** | 1. **解除 `.gitignore` 屏蔽并纳入预编译产物**：更新 `device/google/gru/.gitignore`，将 `device/google/gru/modules.mk`、`prebuilt/gru-keep`、`prebuilt/watchdog.ko`、`prebuilt/dw_wdt.ko`、`prebuilt/6.6.34-phase2/*.ko`（87 个早期 ramdisk 模块）纳入版本控制；同步拷入 `6.6.34-phase2` 内核 `Image` 与全部 5 个 Gru 系列 DTB（`rk3399-gru-scarlet-kd.dtb` [已校验为 `dr_mode = "host"` 正式版]、`scarlet-inx`、`scarlet-dumo`、`kevin`、`bob`）。<br>2. **优化 `gru-keep.c` 并重编静态二进制**：在等待 `bootlog` 分区的循环中增加 `find_part("super", ...)` 探测，当外置存储控制器已就绪但磁盘不含 `bootlog` 分区时不再阻塞 45 秒；修复 `snprintf` 截断告警并重新静态编译 `prebuilt/gru-keep`。<br>3. **消除硬编码路径与归档调试脚本**：移除 `wrap-ramdisk.sh` 与 `prepare-ramdisk-modules.sh` 中的个人本地路径（改为基于 `$ANDROID_BUILD_TOP` 与参数推导）；将阶段 3 设备端刷写脚本（`write*.sh`、`readlog.sh`、`flash-sparse.py`、`partition-table.txt`）归档至 `device/google/gru/tools/bringup/` 并参数化 `DIR`。<br>4. **开源许可声明**：新增根目录 `LICENSE`（Apache-2.0 主许可证 + Linux GPL-2.0 内核模块/补丁与 `linux-firmware` 固件分发声明）。 |
+| 2026-10-21 | **步骤 2（已完成）** | 1. **新增 `/vendor/bin/blkpg_resize`**：在 `device/google/gru/tools/blkpg_resize/` 下创建 `blkpg_resize.c` 与 `Android.bp`，通过 `BLKPG_RESIZE_PARTITION` ioctl 在不重启内核的情况下实时刷新分区表大小。<br>2. **新增 `/vendor/bin/expand_userdata.sh`**：在 `device/google/gru/scripts/expand_userdata.sh` 中实现首次启动自动扩容逻辑（带 `fe320000.mmc` 外置 SD 卡控制器校验锁，绝不触碰 `fe330000.sdhci` 内置 eMMC；针对 `first_stage_mount` 已挂载的 `/data`，在 `on post-fs` 早期临时 `umount /data` -> `sgdisk --move-second-header` 扩展 GPT 分区并保留 `PARTUUID` -> `blkpg_resize` 通知内核 -> `resize.f2fs` 离线扩容 -> 按原参数重新挂载 `/data`）。<br>3. **集成至设备树与编译验证**：在 `device.mk` 与 `init.gru.rc` 中注册 `blkpg_resize` 与 `expand_userdata` 服务，并同步编译产出目标机 `vendor/bin/blkpg_resize` 以及阶段 3 打包所需的宿主机工具 `futility-host` 与 `sgdisk`。 |
 

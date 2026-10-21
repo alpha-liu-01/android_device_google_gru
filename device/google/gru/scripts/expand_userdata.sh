@@ -160,9 +160,9 @@ fi
 sleep 0.5
 log "Resizing F2FS filesystem on $USERDATA_DEV..."
 if [ -x /system/bin/resize.f2fs ]; then
-    /system/bin/resize.f2fs "$USERDATA_DEV"
+    /system/bin/resize.f2fs -f -F "$USERDATA_DEV"
 elif [ -x /system/bin/resize2fs ]; then
-    /system/bin/resize2fs "$USERDATA_DEV"
+    /system/bin/resize2fs -f "$USERDATA_DEV"
 fi
 
 # 10. Remount /data if it was mounted before expansion

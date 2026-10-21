@@ -1,2 +1,2 @@
-prebuilt/
-modules.mk
+# Prebuilt kernel modules, DTBs, and ramdisk init wrapper under prebuilt/
+# as well as modules.mk are intentionally tracked in git for reproducible builds.

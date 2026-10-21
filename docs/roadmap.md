@@ -256,6 +256,8 @@ RuntimeWatchdogSec=30
 
 ### 5 可分发的 SD 镜像
 
+> 详细方案、仓库公开化审查与打包流水线设计见 [`docs/phase-5.md`](phase-5.md)。
+
 本仓库提供打包脚本和安装说明：开发者模式、允许外置盘启动、写入 SD、校验和。FIT 里至少有已验证的 `scarlet-kd`。
 
 完成标准：按文档从零写入一张卡可以启动。eMMC 上的 postmarketOS 仍在。

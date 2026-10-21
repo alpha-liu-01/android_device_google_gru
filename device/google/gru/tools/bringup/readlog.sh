@@ -1,7 +1,7 @@
 #!/bin/sh
 # Read the phase 3 boot log. Does not write the SD or the eMMC.
 set -eu
-DIR=/home/user/phase3
+DIR=${DIR:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)}
 OUT=$DIR/bootlog-copy.txt
 say() { printf '%s\n' "$*" | tee -a "$OUT"; }
 : > "$OUT"

@@ -2,7 +2,7 @@
 # Replace only the SD super image. Does not change the partition table,
 # KernelA, userdata, metadata, bootlog, or the internal disk.
 set -eu
-DIR=/home/user/phase3
+DIR=${DIR:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)}
 LOG=$DIR/write-super.log
 SUPER=$DIR/super.img
 SD=/dev/mmcblk0

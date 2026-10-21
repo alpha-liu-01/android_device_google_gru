@@ -2,7 +2,8 @@
 # Write the phase 3 Android image to the SD card only.
 set -eu
 set -o pipefail
-DIR=/home/user/phase3
+DIR=${DIR:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)}
+export DIR
 LOG=$DIR/write.log
 IMAGE=$DIR/kernel.kpart
 SUPER=$DIR/super.img
@@ -74,8 +75,8 @@ sleep 1
 cgpt show "$SD" | tee "$DIR/cgpt-sd-after.txt" | tee -a "$LOG"
 
 python3 - << 'PY' | tee -a "$LOG"
-import re, sys
-text = open("/home/user/phase3/cgpt-sd-after.txt").read()
+import os, re, sys
+text = open(os.path.join(os.environ.get("DIR", "."), "cgpt-sd-after.txt")).read()
 want = {
     1: (8192, 65536, "KernelA", "priority=10"),
     2: (73728, 65536, "KernelB", "priority=0"),

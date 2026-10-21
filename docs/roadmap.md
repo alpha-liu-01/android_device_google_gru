@@ -290,4 +290,4 @@ SELinux enforcing、从源码构建内核、安装和升级说明，放在有可
 
 Soong 不跟随目录符号链接。设备树放到 Android 树里时，每个文件单独链回这个仓库，和上次 Trogdor 的做法相同。
 
-当前进度：阶段 0～3、阶段 4 原定 9 项（Panfrost、zram、触摸/旋转/手写笔、背光、Wi-Fi 与无线 `adb`、蓝牙、音频、电量与充电、S3 睡眠唤醒）以及阶段 4.5 扩展项（WebView 黑屏修复、V4L2 硬解、DP Alt Mode 外接屏、前后摄像头预览与拍照、内置 DMIC 麦克风/3.5mm 耳机孔路由与相机有声录像）已全部跑通；仅剩全功能 Type-C USB（MTP / 有线 adb / OTG 角色切换）与进入阶段 5 可分发 SD 镜像打包。
+当前进度：阶段 0～3、阶段 4 原定 9 项（Panfrost、zram、触摸/旋转/手写笔、背光、Wi-Fi 与无线 `adb`、蓝牙、音频、电量与充电、S3 睡眠唤醒）以及阶段 4.5 扩展项（WebView 黑屏修复、V4L2 硬解、DP Alt Mode 外接屏、前后摄像头预览与拍照、内置 DMIC 麦克风/3.5mm 耳机孔路由与相机有声录像）已全部跑通；阶段 5（可分发 SD 镜像打包脚本 `pack_kpart.sh` / `pack_release_image.sh`、首次启动自动扩容 `expand_userdata.sh` + `blkpg_resize`、预编译产物入库与 `README.md` 刷机文档）已全部构建就绪并产出首个发布包 `lineage-23.2-gru-20261021.zip`（详见 [`docs/phase-5.md`](phase-5.md)）。

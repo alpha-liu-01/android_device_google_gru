@@ -1,0 +1,16 @@
+diff --git a/drm/DrmPlane.cpp b/drm/DrmPlane.cpp
+index 57ec5cf..6a205f6 100644
+--- a/drm/DrmPlane.cpp
++++ b/drm/DrmPlane.cpp
+@@ -227,6 +227,11 @@ bool DrmPlane::IsValidForLayer(const LayerData *layer) {
+     return false;
+   }
+ 
++  if (layer->pi.RequireScalingOrPhasing() && !HasNonRgbFormat()) {
++    ALOGV("Scaling is not supported on RGB-only plane %d", GetId());
++    return false;
++  }
++
+   return true;
+ }
+ 

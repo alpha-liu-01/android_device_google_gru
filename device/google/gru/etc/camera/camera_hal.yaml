@@ -1,0 +1,7 @@
+cameras:
+  "/base/i2c@ff160000/camera@36":
+    location: back
+    rotation: 90
+  "/base/i2c@ff160000/camera@3c":
+    location: front
+    rotation: 90

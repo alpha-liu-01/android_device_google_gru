@@ -1,0 +1,13 @@
+diff --git a/optional/mesa/board.mk b/optional/mesa/board.mk
+index a55780b..3f1d92f 100644
+--- a/optional/mesa/board.mk
++++ b/optional/mesa/board.mk
+@@ -19,7 +19,7 @@ BOARD_MESA3D_MESON_ARGS += \
+     -Dprecomp-compiler=system \
+     -Dmesa-clc=system \
+     -Dspirv-tools=disabled
+-else ifeq ($(shell expr $(MESA_VERSION_MAJOR) \== 25), 1)
++else ifeq ($(shell expr $(MESA_VERSION_MAJOR) \= 25), 1)
+ BOARD_MESA3D_MESON_ARGS += \
+     -Dprecomp-compiler=system \
+     -Dmesa-clc=system

@@ -1,10 +1,11 @@
 #!/bin/sh
-# Replace only the SD KernelA FIT. Does not change the partition table,
-# super, userdata, or the internal disk.
+# Replace the SD KernelA FIT and the super image. Does not change the
+# partition table, userdata, metadata, bootlog, or the internal disk.
 set -eu
-DIR=/home/user/phase3
-LOG=$DIR/write-kernel.log
+DIR=${DIR:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)}
+LOG=$DIR/write-loopfix.log
 IMAGE=$DIR/kernel.kpart
+SUPER=$DIR/super.img
 SD=/dev/mmcblk0
 EMMC=/dev/mmcblk1
 EXPECT=5c188eeb7a89fdb1bf442ccccd61a556ad5e232149454659853e7dee98f0068a
@@ -31,7 +32,7 @@ if [ "$(blockdev --getsize64 "$SD")" != 62549655552 ]; then
     say ABORT_DISK
     exit 1
 fi
-if [ ! -f "$IMAGE" ]; then
+if [ ! -f "$IMAGE" ] || [ ! -f "$SUPER" ]; then
     say ABORT_FILES
     exit 1
 fi
@@ -52,19 +53,23 @@ depthchargectl check "$IMAGE" 2>&1 | tee -a "$LOG"
 depthchargectl write --no-prioritize --target /dev/mmcblk0p1 "$IMAGE" 2>&1 | tee -a "$LOG"
 sync
 blockdev --flushbufs "$SD"
+WR=$(dd if=/dev/mmcblk0p1 bs=1 count="$KSIZE" status=none | sha256sum | awk '{print $1}')
+IMG=$(sha256sum "$IMAGE" | awk '{print $1}')
+say "kernel_image=$IMG"
+say "kernel_written=$WR"
+if [ "$IMG" != "$WR" ]; then
+    say ABORT_KERNEL_MISMATCH
+    exit 1
+fi
+say "=== super ==="
+python3 "$DIR/flash-sparse.py" "$SUPER" /dev/mmcblk0p6
+sync
+blockdev --flushbufs "$SD"
 say "=== emmc sha after ==="
 AFTER=$(sha256sum "${EMMC}p1" | awk '{print $1}')
 say "$AFTER"
 if [ "$AFTER" != "$EXPECT" ]; then
     say ABORT_EMMC_CHANGED
-    exit 1
-fi
-WR=$(dd if=/dev/mmcblk0p1 bs=1 count="$KSIZE" status=none | sha256sum | awk '{print $1}')
-IMG=$(sha256sum "$IMAGE" | awk '{print $1}')
-say "image=$IMG"
-say "written=$WR"
-if [ "$IMG" != "$WR" ]; then
-    say ABORT_MISMATCH
     exit 1
 fi
 say "WRITE_OK /dev/mmcblk0p1 $KSIZE"

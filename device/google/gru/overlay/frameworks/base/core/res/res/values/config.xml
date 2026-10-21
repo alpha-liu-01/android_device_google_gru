@@ -75,4 +75,9 @@
         <item>7</item>
     </integer-array>
 
+    <!-- Desktop mode is supported on the current device and developer option -->
+    <bool name="config_isDesktopModeSupported">true</bool>
+    <bool name="config_isDesktopModeDevOptionSupported">true</bool>
+    <bool name="config_canInternalDisplayHostDesktops">true</bool>
+
 </resources>

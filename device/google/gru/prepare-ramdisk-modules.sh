@@ -2,7 +2,11 @@
 # Collect the phase 2 modules the first Android ramdisk has to load.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-MODSRC=${MODSRC:-/home/alpha/src/gru-phase2/modinstall/lib/modules/6.6.34-phase2}
+MODSRC=${1:-${MODSRC:-}}
+if [ -z "$MODSRC" ] || [ ! -f "$MODSRC/modules.dep" ]; then
+    echo "Usage: $0 /path/to/lib/modules/6.6.34-phase2" >&2
+    exit 1
+fi
 DEST=$ROOT/prebuilt/6.6.34-phase2
 python3 - "$MODSRC" "$DEST" "$ROOT/modules.mk" << 'PY'
 import os, pathlib, subprocess, sys

@@ -2,7 +2,9 @@
 # Put gru-keep in front of Android's init and leave an uncompressed cpio.
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-RAMDISK=${1:-/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/ramdisk.img}
+BUILD_TOP=${ANDROID_BUILD_TOP:-$(CDPATH= cd -- "$ROOT/../../.." && pwd)}
+PRODUCT_OUT=${PRODUCT_OUT:-$BUILD_TOP/out/target/product/gru}
+RAMDISK=${1:-$PRODUCT_OUT/ramdisk.img}
 WORKDIR=${2:-/tmp/gru-ramdisk}
 KEEP=$ROOT/prebuilt/gru-keep
 rm -rf "$WORKDIR"

@@ -1,0 +1,10 @@
+diff --git a/optional/v4l2_codec2/android.hardware.media.c2-extended-seccomp_policy-arm64 b/optional/v4l2_codec2/android.hardware.media.c2-extended-seccomp_policy-arm64
+index 726c07c..35d40d0 100644
+--- a/optional/v4l2_codec2/android.hardware.media.c2-extended-seccomp_policy-arm64
++++ b/optional/v4l2_codec2/android.hardware.media.c2-extended-seccomp_policy-arm64
+@@ -8,3 +8,5 @@ sched_getaffinity: 1
+ sched_setaffinity: 1
+ sched_setscheduler: 1
+ sysinfo: 1
++fcntl: 1
++uname: 1

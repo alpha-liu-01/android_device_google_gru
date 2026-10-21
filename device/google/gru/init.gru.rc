@@ -81,6 +81,22 @@ on early-init
     insmod /vendor/lib/snd-soc-hdmi-codec.ko
     insmod /vendor/lib/snd-soc-rk3399-gru-sound.ko
     insmod /vendor/lib/mc.ko
+    insmod /vendor/lib/videodev.ko
+    insmod /vendor/lib/videobuf2-common.ko
+    insmod /vendor/lib/videobuf2-memops.ko
+    insmod /vendor/lib/videobuf2-dma-contig.ko
+    insmod /vendor/lib/videobuf2-v4l2.ko
+    insmod /vendor/lib/videobuf2-vmalloc.ko
+    insmod /vendor/lib/v4l2-async.ko
+    insmod /vendor/lib/v4l2-fwnode.ko
+    insmod /vendor/lib/ov5695.ko
+    insmod /vendor/lib/ov2685.ko
+    insmod /vendor/lib/rockchip-isp1.ko
+    insmod /vendor/lib/v4l2-mem2mem.ko
+    insmod /vendor/lib/v4l2-h264.ko
+    insmod /vendor/lib/v4l2-vp9.ko
+    insmod /vendor/lib/hantro-vpu.ko
+    insmod /vendor/lib/rockchip-vdec.ko
     insmod /vendor/lib/snd-hwdep.ko
     insmod /vendor/lib/snd-seq-device.ko
     insmod /vendor/lib/snd-rawmidi.ko
@@ -115,21 +131,13 @@ on fs
 # composer finds no pipeline and stays headless, and the panel keeps the
 # last console frame. Unbind here, before that class starts.
 on post-fs
+    exec_start expand_userdata
     write /sys/class/vtconsole/vtcon0/bind 0
     write /sys/class/vtconsole/vtcon1/bind 0
     chown bluetooth bluetooth /dev/rfkill
     chmod 0660 /dev/rfkill
     chown uhid uhid /dev/uhid
     chmod 0660 /dev/uhid
-    # 6.6.34-phase2 builds CONFIG_DMABUF_HEAPS_CMA=y (/dev/dma_heap/reserved,
-    # 253:0) without CONFIG_DMABUF_HEAPS_SYSTEM. Codec2 (debug.c2.use_dmabufheaps=1)
-    # opens /dev/dma_heap/system; expose the same char node with system_heap label.
-    chown system system /dev/dma_heap/reserved
-    chmod 0444 /dev/dma_heap/reserved
-    exec - root root -- /system/bin/mknod /dev/dma_heap/system c 253 0
-    chown system system /dev/dma_heap/system
-    chmod 0444 /dev/dma_heap/system
-    restorecon /dev/dma_heap/system
     chown system system /dev/iio:device0
     chmod 0660 /dev/iio:device0
     chown system system /sys/bus/iio/devices/iio:device0/buffer/enable
@@ -183,6 +191,8 @@ on property:sys.boot_completed=1
     exec_background - root root -- /system/bin/pm enable com.android.bluetooth
     exec_background - root root -- /system/bin/settings put system screen_off_timeout 86400000
     exec_background - root root -- /system/bin/settings put secure show_ime_with_hard_keyboard 1
+    exec_background - root root -- /system/bin/settings put global override_desktop_experience_features 1
+    exec_background - root audio -- /system/bin/tinymix2 -D 0 set "Out DAIR Mux" 0
     write /proc/sys/kernel/printk "3 4 1 3"
 
 # usbd only talks to IUsbGadget. With configfs left at 0 that service is
@@ -200,6 +210,14 @@ service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
     disabled
     oneshot
     user root
+
+service expand_userdata /system/bin/sh /vendor/bin/expand_userdata.sh
+    class core
+    user root
+    group root system
+    disabled
+    oneshot
+    seclabel u:r:init:s0
 
 # system_server's Java exception never reaches kmsg by itself. The script
 # keeps a copy on /data and mirrors the same lines to kmsg one at a time.

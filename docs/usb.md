@@ -296,21 +296,12 @@
      - 当触发 `cros_usbpd_charger_ec_event()`（PD/电源事件）时，同时通知或触发电池 supply 状态刷新，或者在 `BatteryMonitor.cpp` 补丁中确保当所有外部 Charger（`AC`/`USB`）均 `online=0` 时，若智能电池 `sbs-9-000b` 因 I2C 平均电流滞后仍短暂报告 `CHARGING`，将其状态修正为 `BATTERY_STATUS_DISCHARGING`，彻底消除无充电器在线时的「正在无线充电」及常驻充电图标。
   2. 重新编译 `cros_usbpd-charger.ko` 放入 `device/google/gru/modules/`，可通过无线 `adb` 先行 `rmmod` / `insmod` 实机验证。
 
-### 第三步：开启全功能 Type-C OTG 双角色（`dr_mode = "otg"` + 有线 `adb` / MTP / PTP + OTG Host 自动切换）
-- **为什么排第三**：此步需要更新内核设备树（DTB，打包进 FIT `image.fit` 写入 SD 卡 p1）并同步启用用户空间的 USB ConfigFS Gadget HAL。
-- **技术可行性验证（已核实内核源码）**：
-  - 在 `/home/alpha/src/gru-phase2/linux-6.6.34/drivers/usb/dwc3/drd.c:545`（`dwc3_drd_init`）中，当 `usbdrd_dwc3_0` 设为 `dr_mode = "otg"` 时，`dwc3` 会自动从父节点 `usbdrd3_0` 获取 `extcon = <&usbc_extcon0>`，并注册 `EXTCON_USB_HOST` 通知回调 `dwc3_drd_notifier()`：
-    - 当插入 OTG 外设（USB DAC 声卡、U 盘、键鼠、便携屏）时，`extcon-usbc-cros-ec` 置 `EXTCON_USB_HOST=1`，`dwc3` 自动切换为 `DWC3_GCTL_PRTCAP_HOST`（xHCI Host 模式）。
-    - 当插入电脑或拔出 OTG 外设时，`EXTCON_USB_HOST=0`，`dwc3` 自动切换为 `DWC3_GCTL_PRTCAP_DEVICE`（Gadget 模式），并在 `/sys/class/udc/` 下注册 **`fe800000.usb`**！
-- **具体操作**：
-  1. **设备树修改**：将 `rk3399-gru.dtsi:668` 中 `usbdrd_dwc3_0` 的 `dr_mode = "host";` 改为 `dr_mode = "otg";`，重编 `rk3399-gru-scarlet-kd.dtb` 并更新内核 FIT 镜像。
-  2. **用户空间 USB Gadget 启用**：
-     - 在 `device/google/gru/BoardConfig.mk` 与 `device.mk` 中移除 `TARGET_USB_INIT_SCRIPT := none`（恢复默认的 `TARGET_USB_INIT_SCRIPT := mainline`，打包 `/vendor/etc/init/hw/init.mainline.usb.rc`）。
-     - 在 `device/google/gru/init.gru.rc` 中：
-       - 移除 `setprop vendor.usb.configfs 0` 和 `on property:init.svc.usbd=running stop usbd`；
-       - 设置 `setprop sys.usb.controller fe800000.usb` 与 `setprop vendor.usb.controller fe800000.usb`；
-       - 保留 `service.adb.tcp.port=5555`（或支持有线/无线 `adb` 共存），使 `com.android.hardware.usb.gadget.mainline` APEX 服务（`vendor.usb-gadget-hal`）与 `usbd` 正常启动并绑定 `fe800000.usb`。
-  3. **验证目标**：插电脑时识别出 `Google Gru`（支持有线 `adb`、状态栏弹出 USB 用途通知并可切换「文件传输 MTP」/「PTP」），拔下电脑换插 USB-C DAC 声卡或扩展坞时自动切回 Host 模式。
+### 第三步：开启全功能 Type-C OTG 双角色（已验证与 OTG 外设模式无法共存，予以放弃并保持 `dr_mode = "host"`）
+- **实机验证结论**：
+  - 经实机测试证明，在 Scarlet（`rk3399-gru-scarlet-kd`）单口 `fe800000.usb`（`usbdrd_dwc3_0`）上，开启全功能 USB-C Gadget（MTP / 有线 `adb`）与 OTG Host 模式（USB-C DAC 声卡、扩展坞等）存在硬件/角色切换冲突，无法可靠共存。
+  - 因此**放弃第三步**（归档于 `no-mtp` 分支）：内核设备树 `rk3399-gru.dtsi` 保持 `dr_mode = "host"`，用户空间保持 `TARGET_USB_INIT_SCRIPT := none`、`setprop vendor.usb.configfs 0` 与 `stop usbd`，优先保障 USB-C OTG Host 外设（Type-C DAC 耳机等）与无线 `adb`（TCP `5555`）100% 稳定工作。
+- **原方案归档（仅作技术备忘，不启用）**：
+  - 在 `/home/alpha/src/gru-phase2/linux-6.6.34/drivers/usb/dwc3/drd.c:545`（`dwc3_drd_init`）中，当 `usbdrd_dwc3_0` 设为 `dr_mode = "otg"` 时，`dwc3` 从父节点 `usbdrd3_0` 获取 `extcon = <&usbc_extcon0>` 并注册 `EXTCON_USB_HOST` 通知回调 `dwc3_drd_notifier()`，在 `/sys/class/udc/` 下注册 `fe800000.usb`。但实机验证表明双角色动态切换在该平台上无法与 OTG 稳定共存。
 
 ### 第四步：完善 USB-C DP Alt Mode 外接显示器（供电角色说明与 VOP 图层缩放修复）
 - **为什么排第四**：DP Alt Mode 物理链路已经跑通，只需解决「未接外接电源的便携屏触发 VBUS 过流」与「`drmhwc` 在 `win2` 无缩放器 Plane 上的 `-ERANGE` 报错」。
@@ -383,9 +374,53 @@
    - 在 `BatteryMonitor::updateValues()` 末尾以及 `BatteryMonitor::getChargeStatus()` 中增加一致性修正：当所有外部充电器均不在线（`!isChargerOnline()`，即 `AC`/`USB`/`Wireless`/`Dock` 全部为 `false`）时，若智能电池 `sbs-9-000b` 因 TI BQ40Z50 库仑计平均电流寄存器 1～2 秒滞后仍短暂返回 `BatteryStatus::CHARGING`，将其修正为 `BatteryStatus::DISCHARGING`。
    - 彻底消除拔线瞬间因 `batteryStatus == CHARGING && pluggedStatus == 0` 被 Android SettingsLib 误判为「正在无线充电」或卡在充电图标的现象。
 
-3. **实机免重启热加载状态**：
+3. **实机免重启热加载与镜像固化状态**：
    - 已在实机卸载旧 `cros_usbpd_charger` 并 `insmod` 包含 `EC_CMD_USB_PD_CONTROL` 连接判据与 `poll_work` 延迟复核的 `cros_usbpd-charger.ko`；
-   - 已重编 `android.hardware.health-service.example`，通过 `mount --bind` 覆盖 `/vendor/bin/hw/android.hardware.health-service.example` 并重启 `vendor.health-default` 服务。
+   - 已重编 `android.hardware.health-service.example`，通过 `mount --bind` 覆盖 `/vendor/bin/hw/android.hardware.health-service.example` 并重启 `vendor.health-default` 服务；
+   - 已放弃第三步（OTG Gadget 与 Host 模式冲突），将内核 `rk3399-gru.dtsi` 恢复为 `dr_mode = "host"` 并重新编译 `rk3399-gru-scarlet-kd.dtb`（`67925` 字节，sha256 `d36a32cb7eff727919cbf86f3a94d139135938354d75953968ed350e620d2ee2`）、打包 `/tmp/gru-ramdisk/ramdisk-wrapped.cpio`（`6878208` 字节，sha256 `89c1074e3caecefa0d7f202e4133cc7dbfafc9e475e82f314287db624688963f`），并将第一步与第二步全部改动正式固化进 `out/target/product/gru/super.img`（`1254085012` 字节，sha256 `1eb8fa3b981714612f166b131063d2306c5610c0ba5d6dc78336d13d7a67ab1e`）。
+
+### 第四步：完善 USB-C DP Alt Mode 外接显示器（供电验证、显示比例机制分析与 `drmhwc` 缩放报错修复）
+
+1. **外接 PD 电源后的供电稳定性验证（已实测通过）**：
+   - 在给 USB-C 便携屏（`3840x2160@60Hz`，16:9）接入独立 PD 供电后连接平板，实机日志（`20:26:10` 至 `20:27:28` 拔线，持续 78 秒）显示 `cdn-dp` 与 `DP-1` 全程零掉线、零 VBUS 过流复位，竖屏与横屏切换均正常。
+   - 这直接证实了此前便携屏 3.5 秒断连重连循环完全是因为便携屏未接电源时从平板 5V VBUS 抽取超限电流触发 EC 过流保护（OCP），物理 DP Alt Mode 链路本身完全健康。
+
+2. **「外接屏显示区域无法占满屏幕（左右黑边）」的原因与全屏扩展桌面方案**：
+   - **为什么默认镜像模式无法占满 16:9 屏幕**：
+     - Scarlet 内置显示屏物理分辨率为 `1536x2048`（竖屏 `3:4`，横屏 `2048x1536` 即 **`4:3`**），而外接便携屏分辨率为 `3840x2160`（**`16:9`** 宽屏）。
+     - 默认情况下，Android `WindowManager` 为外接屏创建 `ContentRecordingSession` 镜像主屏（`displayId=0`）的内容。实机日志明确记录了镜像变换参数：
+       `WindowManager: Content Recording: Apply transformations of shift 480 x 0, scale 1.40625 x 1.40625, crop (aka recorded content size) 2048 x 1536 for display 2; display has size 1477 x 831; surface has size 3840 x 2160`
+     - 计算可知：为了保持 `2048x1536`（`4:3`）画面比例不拉伸变形，`WindowManager` 将其等比放大 `1.40625` 倍（`2160 / 1536 = 1.40625`）至 **`2880x2160`**，并在水平方向居中偏移 `shift 480 x 0`（左右各留 `480` 像素黑边，`480 + 2880 + 480 = 3840`）。竖屏（`1536x2048`，`3:4`）时同理，等比缩放至 `1620x2160`，左右各留 `1110` 像素黑边。**这是 `4:3`/`3:4` 平板镜像到 `16:9` 显示器时的标准等比信箱（Pillarbox）行为，并非驱动或硬件故障。**
+   - **如何让外接屏 16:9 满屏显示**：
+     - **场景一（视频/媒体播放 App）**：支持 `Presentation` API 的视频播放器在投屏时会自动将视频画面以原生 `16:9`（`3840x2160`）输出到外接屏，届时会自动占满整块屏幕。
+     - **场景二（开启 Android 16 扩展桌面模式 / Desktop Experience，让外接屏作为独立 16:9 桌面满屏运行）**：
+       - 排查 `ShellDesktopMode` 日志发现，接屏时打印了 `DesktopDisplayEventHandler: shouldCreateOrWarmUpDesk skipping displayId=2 reason: desktop ineligible`。
+       - 追查 `frameworks/base/libs/WindowManager/Shell/shared/src/com/android/wm/shell/shared/desktopmode/DesktopStateImpl.kt` 与 `DesktopExperienceFlags.java` 发现：在 Android 16（LineageOS 23.2）中，外接屏默认处于镜像模式（`ENABLE_DISPLAY_CONTENT_MODE_MANAGEMENT = false`），必须开启「桌面体验（Desktop Experience）」开关或满足 `config_canInternalDisplayHostDesktops` / `config_isDesktopModeDevOptionSupported`，外接屏才能切换为独立 `3840x2160`（16:9 满屏）桌面。
+       - 已在 `device/google/gru/overlay/frameworks/base/core/res/res/values/config.xml` 中补齐 `<bool name="config_isDesktopModeSupported">true</bool>`、`<bool name="config_isDesktopModeDevOptionSupported">true</bool>` 与 `<bool name="config_canInternalDisplayHostDesktops">true</bool>`。
+       - 若需立即在当前运行的系统上启用外接屏 16:9 满屏扩展桌面模式，只需执行（或在「开发者选项 -> 覆盖桌面体验功能」中开启并重启）：
+         ```bash
+         adb shell settings put global override_desktop_experience_features 1
+         adb shell setprop persist.wm.debug.desktop_experience_devopts true
+         ```
+         重启后外接屏将作为独立 `3840x2160`（16:9）扩展桌面运行，100% 占满外接显示器。
+
+3. **实机日志发现的隐藏问题与 `drmhwc` 修复（补丁已保存至 `patches/external_drm_hwcomposer_plane_scaling.patch`）**：
+   - **问题定位**：
+     - 虽然外接屏画面正常显示，但抓取 `20:26:10`–`20:27:28` 的 `logcat` 发现：只要在外接屏连接状态下操作界面（多图层合成），`drmhwc` 就会以每秒 30 次的频率报错：
+       `W drmhwc : Test-only seamless=0 ret=-34 errno=34 strerror=Math result not representable`
+     - 追查内核 `/home/alpha/src/gru-phase2/linux-6.6.34/drivers/gpu/drm/rockchip/rockchip_drm_vop.c:812` 与 `drm_atomic_helper.c:903`：RK3399 VOP Big（`ff900000.vop`）共有 4 个硬件图层（`win0` Primary、`win1` Overlay、`win2` Overlay、`win3` Cursor）。其中**只有 `win0` 和 `win1`（`rk3399_win01_data` / `rk3368_win01_data`）具备硬件缩放器（`.scl`）和 YUV 格式支持**；而 **`win2` 和 `win3`（`rk3368_win23_data`）没有硬件缩放器（`.scl = NULL`，仅支持 RGB 格式，`min_scale = max_scale = DRM_PLANE_NO_SCALING`）**。
+     - 在外接屏镜像模式下，所有图层都需要从 `2048x1536` 缩放到 `2880x2160`（`scale = 1.40625`）。当画面出现 3 个及以上图层时，`drm_hwcomposer` 的 `DrmKmsPlan::CreateDrmKmsPlan()` 将第 3 个需要缩放的图层分配给了 `win2`。由于 `DrmPlane::IsValidForLayer()`（`external/drm_hwcomposer/drm/DrmPlane.cpp:199`）未检查 Plane 是否具备缩放能力，导致每次 `TestComposition()` 调用 `DRM_MODE_ATOMIC_TEST_ONLY` 时都被内核 `drm_atomic_helper_check_plane_state()` 拒绝并返回 `-ERANGE (-34)`，白白浪费一次内核 `ioctl` 后才回退到 GPU 合成！
+   - **代码修复与实机热加载**：
+     1. 在 `external/drm_hwcomposer/drm/DrmPlane.cpp` 的 `DrmPlane::IsValidForLayer()` 中增加判据：
+        ```cpp
+        if (layer->pi.RequireScalingOrPhasing() && !HasNonRgbFormat()) {
+          ALOGV("Scaling is not supported on RGB-only plane %d", GetId());
+          return false;
+        }
+        ```
+        利用 DRM Plane 枚举属性中「VOP Full Window（`win0`/`win1`）支持 YUV+RGB（`HasNonRgbFormat() == true`）、VOP Lite Window（`win2`/`win3`）仅支持 RGB（`HasNonRgbFormat() == false`）」的硬件特征，在用户空间直接拦截将缩放图层分配给无缩放器 `win2`/`win3` 的行为，让超出硬件缩放器数量的图层直接由 `Backend` 规划进 GPU Client 合成，彻底消除 `-ERANGE (-34)` 报错与无效 `ioctl` 开销。
+     2. 在 `device/google/gru/device.mk` 的 `PRODUCT_VENDOR_PROPERTIES` 中新增 `vendor.hwc.drm.internal_display_names=DSI-1,eDP-1`，明确告知 `drmhwc` 仅将 `DSI-1`/`eDP-1` 视作内置面板，防止当 `DP-1` 先于或同时绑定时被误判为 Internal Display。
+     3. 已重新编译 `/apex/com.android.hardware.graphics.composer.drm_hwcomposer/bin/hw/android.hardware.composer.hwc3-service.drm`，并通过 `mount --bind` 热替换至当前实机运行。
 
 ## 事件
 
@@ -394,4 +429,7 @@
 | 2026-10-20 | 完成 USB-C 全功能诊断与四步修复规划文档 `docs/usb.md`。 |
 | 2026-10-20 | 完成第一步（USB-C 音频）代码修改并通过 `touch /apex/apex-info-list.xml` 在实机免重启热加载 `snd-usb-audio.ko`、`IModule/usb` 与 `usb_audio_policy_configuration.xml`，进入人工插拔 DAC 声卡测试阶段。 |
 | 2026-10-20 | 定位并修复 USB-C DAC 播放爆电平杂音（`AHAL_StreamAlsa` 非阻塞 `MonoPipe` 溢出每秒丢弃数千帧），重编 `android.hardware.audio.service-aidl.example` 并热挂载至实机，人工验证耳机播放正常。 |
-| 2026-10-20 | 完成第二步（修复连接 PC 拔线后充电状态常驻卡死与「正在无线充电」乌龙状态），重编并热加载 `cros_usbpd-charger.ko` 与 `android.hardware.health-service.example`，等待人工插拔充电器与 PC 测试。 |
+| 2026-10-20 | 完成第二步（修复连接 PC 拔线后充电状态常驻卡死与「正在无线充电」乌龙状态：引入 `EC_CMD_USB_PD_CONTROL` 物理连接位判据、`100ms × 5` `poll_work` 延迟复核、`last_psy_online` uevent 通知与 `BatteryMonitor` 无充电器在线时的状态修正）。 |
+| 2026-10-20 | 实机验证确认第三步全功能 USB-C（Gadget 模式）与 OTG Host 无法共存，回退并清理第三步改动（保持 `dr_mode = "host"` 与 `TARGET_USB_INIT_SCRIPT := none`），将第一步与第二步全部改动重新编译固化为 `super.img`（`1eb8fa3b981714612f166b131063d2306c5610c0ba5d6dc78336d13d7a67ab1e`）与 `rk3399-gru-scarlet-kd.dtb`（`d36a32cb...`），准备从内置盘 postmarketOS 刷写。 |
+| 2026-10-20 | 完成第四步：实机验证便携屏外接电源后 DP Alt Mode 横竖屏稳定不掉线；分析外接 16:9 屏幕在 4:3 镜像模式下的等比黑边机制并配置 Android 16 扩展桌面支持；修复 `drm_hwcomposer` 在 VOP `win2` 无缩放器图层上的 `ret=-34 (-ERANGE)` 刷屏报错并热加载至实机。 |
+| 2026-10-20 | 将外接显示扩展模式配置（`override_desktop_experience_features 1`、`config_isDesktopModeSupported`、`vendor.hwc.drm.internal_display_names=DSI-1,eDP-1`）与 `DrmPlane.cpp` 缩放判据修复重编固化入 `super.img`（`282b8f271a7039768dec97f5006802b360491ecd00f40b9e68ad135accd10d7f`），刷机后实机验证镜像模式与扩展桌面模式均完全正常。 |

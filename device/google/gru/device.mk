@@ -24,6 +24,9 @@ TARGET_DRM_HWCOMPOSER_VARIANT := aosp
 # The panel cannot be tapped yet. adb must not wait for a confirmation dialog.
 TARGET_HOSTAPD_AND_WPA_SUPPLICANT_FORM := legacy
 TARGET_USB_INIT_SCRIPT := none
+# Codec2 HAL for the rkvdec/hantro stateless decoders, backed by cros-codecs.
+TARGET_MEDIA_C2_HAL := v4l2_codec2
+TARGET_V4L2_CODEC2_USE_EXAMPLE_CONFIGURATION := false
 include device/mainline/common/optional/options.mk
 SUPPORTS_INLINE_KERNEL_BUILDING := false
 
@@ -51,6 +54,7 @@ PRODUCT_PRODUCT_PROPERTIES += \
     ro.adb.secure=0 \
     ro.sf.lcd_density=260 \
     persist.sys.usb.config=adb \
+    persist.wm.debug.desktop_experience_devopts=1 \
     sys.brightness.disable_gamma_conversion=true \
     wifi.interface=wlan0 \
     wifi.direct.interface=p2p-dev-wlan0 \
@@ -84,16 +88,35 @@ PRODUCT_VENDOR_PROPERTIES += \
     persist.sys.zram_enabled=1 \
     service.adb.tcp.port=5555 \
     ro.opengles.version=196609 \
+    ro.hardware.camera=libcamera \
     vendor.hwc.drm.device=/dev/dri/card0 \
+    vendor.hwc.drm.internal_display_names=DSI-1,eDP-1 \
     vendor.minigbm.device=/dev/dri/card0 \
     debug.renderengine.backend=skiaglthreaded \
     debug.hwui.renderer=skiagl \
     ro.surface_flinger.supports_background_blur=0
 
+# Codec2 pool mask ION(16) | GRALLOC(17) | BUFFERQUEUE(18). v4l2_codec2 needs the bufferpool-backed
+# GRALLOC output pool in ByteBuffer mode; without bit 17 CCodec falls back to a basic pool.
+PRODUCT_VENDOR_PROPERTIES += \
+    ro.vendor.v4l2_codec2.decoder.supported.h264=true \
+    ro.vendor.v4l2_codec2.decoder.supported.vp8=true \
+    ro.vendor.v4l2_codec2.decoder.supported.vp9=true \
+    ro.vendor.v4l2_codec2.decode_concurrent_instances=8 \
+    debug.stagefright.c2-poolmask=0x70000
+
 FORCE_USE_ANDROIDMK_FOR_WPA_CONF := true
 PRODUCT_PACKAGES += \
+    blkpg_resize \
     hwservicemanager \
+    mapper.minigbm_upstream \
     android.hardware.bluetooth-service.default \
+    android.hardware.camera.provider-service.lineage \
+    camera.libcamera \
+    ipa_rkisp1 \
+    cam \
+    libcamera_ipa_rkisp1_ov5695.yaml \
+    libcamera_ipa_rkisp1_ov2685.yaml \
     android.hardware.sensors-service.multihal \
     android.hardware.sensors@2.1-gru-subhal \
     android.hardware.wifi-service \
@@ -113,6 +136,8 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/wpa_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/wpa_supplicant_overlay.conf \
     $(LOCAL_PATH)/p2p_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/p2p_supplicant_overlay.conf \
     $(LOCAL_PATH)/etc/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
+    $(LOCAL_PATH)/etc/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
+    $(LOCAL_PATH)/etc/media_codecs_performance_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_performance_c2.xml \
     frameworks/av/services/audiopolicy/config/audio_policy_volumes.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_volumes.xml \
     frameworks/av/services/audiopolicy/config/bluetooth_audio_policy_configuration_7_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/bluetooth_audio_policy_configuration_7_0.xml \
     frameworks/av/services/audiopolicy/config/bluetooth_with_le_audio_policy_configuration_7_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml \
@@ -121,6 +146,8 @@ PRODUCT_COPY_FILES += \
     frameworks/av/services/audiopolicy/config/usb_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/usb_audio_policy_configuration.xml \
     $(LOCAL_PATH)/etc/sensors/hals.conf:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/hals.conf \
     $(LOCAL_PATH)/etc/sensors/sensor_hal_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/sensor_hal_configuration.xml \
+    $(LOCAL_PATH)/etc/camera/camera_hal.yaml:$(TARGET_COPY_OUT_VENDOR)/etc/camera/libcamera/camera_hal.yaml \
+    $(LOCAL_PATH)/etc/camera/camera_hal.yaml:$(TARGET_COPY_OUT_VENDOR)/etc/libcamera/camera_hal.yaml \
     $(LOCAL_PATH)/idc/Elan_Touchscreen.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Elan_Touchscreen.idc \
     $(LOCAL_PATH)/idc/Vendor_04f3_Product_0b03.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Vendor_04f3_Product_0b03.idc \
     $(LOCAL_PATH)/idc/Vendor_2d1f_Product_0036.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Vendor_2d1f_Product_0036.idc \
@@ -132,6 +159,8 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.app_widgets.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.app_widgets.xml \
     frameworks/native/data/etc/android.software.backup.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.backup.xml \
     frameworks/native/data/etc/android.software.voice_recognizers.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.voice_recognizers.xml \
+    frameworks/native/data/etc/android.hardware.camera.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.xml \
+    frameworks/native/data/etc/android.hardware.camera.front.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.front.xml \
     frameworks/native/data/etc/android.hardware.sensor.accelerometer.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.accelerometer.xml \
     frameworks/native/data/etc/android.hardware.sensor.gyroscope.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.gyroscope.xml \
     frameworks/native/data/etc/android.software.print.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.print.xml \
@@ -143,6 +172,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/fstab.gru:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.gru \
     $(LOCAL_PATH)/init.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.gru.rc \
     $(LOCAL_PATH)/ueventd.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.gru.rc \
+    $(LOCAL_PATH)/scripts/expand_userdata.sh:$(TARGET_COPY_OUT_VENDOR)/bin/expand_userdata.sh \
     $(LOCAL_PATH)/gru-logcat.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gru-logcat.sh \
     $(LOCAL_PATH)/firmware/rockchip/dptx.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/rockchip/dptx.bin \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board-2.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board-2.bin \
@@ -188,6 +218,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/fuse.ko:$(TARGET_COPY_OUT_VENDOR)/lib/fuse.ko \
     $(LOCAL_PATH)/modules/gpio_keys.ko:$(TARGET_COPY_OUT_VENDOR)/lib/gpio_keys.ko \
     $(LOCAL_PATH)/modules/gpu-sched.ko:$(TARGET_COPY_OUT_VENDOR)/lib/gpu-sched.ko \
+    $(LOCAL_PATH)/modules/hantro-vpu.ko:$(TARGET_COPY_OUT_VENDOR)/lib/hantro-vpu.ko \
     $(LOCAL_PATH)/modules/hidp.ko:$(TARGET_COPY_OUT_VENDOR)/lib/hidp.ko \
     $(LOCAL_PATH)/modules/i2c-hid-of.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid-of.ko \
     $(LOCAL_PATH)/modules/i2c-hid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid.ko \
@@ -198,12 +229,16 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/lz4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/lz4.ko \
     $(LOCAL_PATH)/modules/mac80211.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mac80211.ko \
     $(LOCAL_PATH)/modules/mc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mc.ko \
+    $(LOCAL_PATH)/modules/ov2685.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ov2685.ko \
+    $(LOCAL_PATH)/modules/ov5695.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ov5695.ko \
     $(LOCAL_PATH)/modules/panfrost.ko:$(TARGET_COPY_OUT_VENDOR)/lib/panfrost.ko \
     $(LOCAL_PATH)/modules/raw_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/raw_diag.ko \
     $(LOCAL_PATH)/modules/rfcomm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfcomm.ko \
     $(LOCAL_PATH)/modules/rfkill.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfkill.ko \
     $(LOCAL_PATH)/modules/rk3399_dmc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rk3399_dmc.ko \
     $(LOCAL_PATH)/modules/rockchip-dfi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-dfi.ko \
+    $(LOCAL_PATH)/modules/rockchip-isp1.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-isp1.ko \
+    $(LOCAL_PATH)/modules/rockchip-vdec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-vdec.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \
     $(LOCAL_PATH)/modules/rtc-cros-ec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rtc-cros-ec.ko \
     $(LOCAL_PATH)/modules/snd-hwdep.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-hwdep.ko \
@@ -230,6 +265,17 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/tcp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/tcp_diag.ko \
     $(LOCAL_PATH)/modules/udp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/udp_diag.ko \
     $(LOCAL_PATH)/modules/uhid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uhid.ko \
+    $(LOCAL_PATH)/modules/v4l2-async.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-async.ko \
+    $(LOCAL_PATH)/modules/v4l2-fwnode.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-fwnode.ko \
+    $(LOCAL_PATH)/modules/v4l2-h264.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-h264.ko \
+    $(LOCAL_PATH)/modules/v4l2-mem2mem.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-mem2mem.ko \
+    $(LOCAL_PATH)/modules/v4l2-vp9.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-vp9.ko \
+    $(LOCAL_PATH)/modules/videobuf2-common.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-common.ko \
+    $(LOCAL_PATH)/modules/videobuf2-dma-contig.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-dma-contig.ko \
+    $(LOCAL_PATH)/modules/videobuf2-memops.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-memops.ko \
+    $(LOCAL_PATH)/modules/videobuf2-v4l2.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-v4l2.ko \
+    $(LOCAL_PATH)/modules/videobuf2-vmalloc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-vmalloc.ko \
+    $(LOCAL_PATH)/modules/videodev.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videodev.ko \
     $(LOCAL_PATH)/modules/zram.ko:$(TARGET_COPY_OUT_VENDOR)/lib/zram.ko
 
 include $(LOCAL_PATH)/modules.mk

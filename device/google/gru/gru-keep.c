@@ -179,7 +179,7 @@ static void list_blocks(void) {
                 *end = '\0';
             }
         }
-        snprintf(line, sizeof(line), " %s %.80s\n", entry->d_name, part != NULL ? part : "nopart");
+        snprintf(line, sizeof(line), " %.64s %.80s\n", entry->d_name, part != NULL ? part : "nopart");
         log_text(line);
     }
     closedir(dir);
@@ -308,6 +308,12 @@ int main(int argc, char **argv) {
     log_err("sysfs", mount_fs("/gru-sys", "sysfs"));
     for (waited = 0; waited < 45; waited++) {
         if (open_bootlog() == 0) {
+            break;
+        }
+        if (find_part("super", super_node, sizeof(super_node)) == 0) {
+            /* Storage controller has probed; try bootlog once more in case of
+               a partition registration race, then continue even if absent. */
+            open_bootlog();
             break;
         }
         if (watchdog >= 0) {

@@ -1,3 +1,27 @@
+diff --git a/audio/aidl/default/XsdcConversion.cpp b/audio/aidl/default/XsdcConversion.cpp
+index 1a5f7f3..8666191 100644
+--- a/audio/aidl/default/XsdcConversion.cpp
++++ b/audio/aidl/default/XsdcConversion.cpp
+@@ -236,11 +236,14 @@ ConversionResult<AudioDevice> createAudioDevice(
+                                ? AudioDeviceAddress::make<AudioDeviceAddress::Tag::id>(
+                                          xDevicePort.getAddress())
+                                : AudioDeviceAddress{}};
+-    if (device.type.type == AudioDeviceType::IN_MICROPHONE && device.type.connection.empty()) {
+-        device.address = "bottom";
+-    } else if (device.type.type == AudioDeviceType::IN_MICROPHONE_BACK &&
+-               device.type.connection.empty()) {
+-        device.address = "back";
++    if (!xDevicePort.hasAddress() || xDevicePort.getAddress().empty()) {
++        if (device.type.type == AudioDeviceType::IN_MICROPHONE &&
++            device.type.connection.empty()) {
++            device.address = "bottom";
++        } else if (device.type.type == AudioDeviceType::IN_MICROPHONE_BACK &&
++                   device.type.connection.empty()) {
++            device.address = "back";
++        }
+     }
+     return device;
+ }
 diff --git a/audio/aidl/default/alsa/StreamAlsa.cpp b/audio/aidl/default/alsa/StreamAlsa.cpp
 index 7a44cc7..eb67f46 100644
 --- a/audio/aidl/default/alsa/StreamAlsa.cpp
@@ -131,6 +155,75 @@ index 77e4f65..0701a06 100644
      return proxy;
  }
  
+diff --git a/audio/aidl/default/primary/StreamPrimary.cpp b/audio/aidl/default/primary/StreamPrimary.cpp
+index 8455680..e4a9951 100644
+--- a/audio/aidl/default/primary/StreamPrimary.cpp
++++ b/audio/aidl/default/primary/StreamPrimary.cpp
+@@ -147,12 +147,35 @@ ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& de
+                    << devices.size();
+         return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+     }
++    int cardId = kDefaultCardAndDeviceId.first;
+     {
+         const bool useStubDriver = devices.empty() || useStubStream(mIsInput, devices[0]);
+         std::lock_guard l(mLock);
+         mAlsaDeviceId = useStubDriver ? kStubDeviceId : getCardAndDeviceId(devices);
++        if (mAlsaDeviceId.first >= 0) {
++            cardId = mAlsaDeviceId.first;
++        }
+     }
+     if (!devices.empty()) {
++        if (struct mixer* m = mixer_open(cardId); m != nullptr) {
++            auto setCtl = [m](const char* name, int val) {
++                if (struct mixer_ctl* ctl = mixer_get_ctl_by_name(m, name); ctl != nullptr) {
++                    mixer_ctl_set_value(ctl, 0, val);
++                }
++            };
++            const bool isAnalog =
++                    devices[0].type.connection == AudioDeviceDescription::CONNECTION_ANALOG;
++            if (mIsInput) {
++                setCtl("Out DAIL Mux", 0);
++                setCtl("Out DAIR Mux", 0);
++                setCtl("Headset Mic Switch", isAnalog ? 1 : 0);
++                setCtl("Int Mic Switch", isAnalog ? 0 : 1);
++            } else {
++                setCtl("Headphones Switch", isAnalog ? 1 : 0);
++                setCtl("Speakers Switch", isAnalog ? 0 : 1);
++            }
++            mixer_close(m);
++        }
+         auto streamDataProcessor = getContext().getStreamDataProcessor().lock();
+         if (streamDataProcessor != nullptr) {
+             streamDataProcessor->setAudioDevice(devices[0]);
+@@ -182,14 +205,22 @@ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
+     std::string deviceAddress = devices[0].address.get<AudioDeviceAddress::id>();
+     AlsaDeviceId cardAndDeviceId;
+     if (const size_t suffixPos = deviceAddress.rfind("CARD_");
+-        suffixPos == std::string::npos ||
++        suffixPos != std::string::npos &&
+         sscanf(deviceAddress.c_str() + suffixPos, "CARD_%d_DEV_%d", &cardAndDeviceId.first,
+-               &cardAndDeviceId.second) != 2) {
+-        return kDefaultCardAndDeviceId;
++               &cardAndDeviceId.second) == 2) {
++        LOG(DEBUG) << __func__ << ": parsed with card id " << cardAndDeviceId.first
++                   << ", device id " << cardAndDeviceId.second;
++        return cardAndDeviceId;
++    }
++    if (devices[0].type.connection == AudioDeviceDescription::CONNECTION_ANALOG) {
++        int analogDev = ::android::base::GetIntProperty(
++                "ro.vendor.audio.tinyalsa.analog_device", 2);
++        if (analogDev >= 0) {
++            LOG(DEBUG) << __func__ << ": using analog device id " << analogDev;
++            return {kDefaultCardAndDeviceId.first, analogDev};
++        }
+     }
+-    LOG(DEBUG) << __func__ << ": parsed with card id " << cardAndDeviceId.first << ", device id "
+-               << cardAndDeviceId.second;
+-    return cardAndDeviceId;
++    return kDefaultCardAndDeviceId;
+ }
+ 
+ // static
 diff --git a/audio/aidl/default/usb/StreamUsb.cpp b/audio/aidl/default/usb/StreamUsb.cpp
 index 9b10432..b542f2e 100644
 --- a/audio/aidl/default/usb/StreamUsb.cpp

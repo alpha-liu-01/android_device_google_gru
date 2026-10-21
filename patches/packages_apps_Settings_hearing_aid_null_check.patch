@@ -1,0 +1,109 @@
+diff --git a/src/com/android/settings/accessibility/AccessibilityHearingAidPreferenceController.java b/src/com/android/settings/accessibility/AccessibilityHearingAidPreferenceController.java
+index 52560c9..dde491e 100644
+--- a/src/com/android/settings/accessibility/AccessibilityHearingAidPreferenceController.java
++++ b/src/com/android/settings/accessibility/AccessibilityHearingAidPreferenceController.java
+@@ -72,7 +72,8 @@ public class AccessibilityHearingAidPreferenceController extends BasePreferenceC
+         super(context, preferenceKey);
+         mLocalBluetoothManager = com.android.settings.bluetooth.Utils.getLocalBluetoothManager(
+                 context);
+-        mProfileManager = mLocalBluetoothManager.getProfileManager();
++        mProfileManager = mLocalBluetoothManager != null
++                ? mLocalBluetoothManager.getProfileManager() : null;
+         mHelper = new HearingAidHelper(context);
+     }
+ 
+@@ -89,6 +90,9 @@ public class AccessibilityHearingAidPreferenceController extends BasePreferenceC
+ 
+     @Override
+     public void onStart() {
++        if (mLocalBluetoothManager == null || mProfileManager == null) {
++            return;
++        }
+         IntentFilter filter = new IntentFilter();
+         filter.addAction(BluetoothHearingAid.ACTION_CONNECTION_STATE_CHANGED);
+         filter.addAction(BluetoothHapClient.ACTION_HAP_CONNECTION_STATE_CHANGED);
+@@ -106,6 +110,9 @@ public class AccessibilityHearingAidPreferenceController extends BasePreferenceC
+ 
+     @Override
+     public void onStop() {
++        if (mLocalBluetoothManager == null || mProfileManager == null) {
++            return;
++        }
+         mContext.unregisterReceiver(mHearingAidChangedReceiver);
+         mLocalBluetoothManager.getEventManager().unregisterCallback(this);
+         mProfileManager.removeServiceListener(this);
+diff --git a/src/com/android/settings/accessibility/AccessibilitySettings.java b/src/com/android/settings/accessibility/AccessibilitySettings.java
+index d76e732..8531a12 100644
+--- a/src/com/android/settings/accessibility/AccessibilitySettings.java
++++ b/src/com/android/settings/accessibility/AccessibilitySettings.java
+@@ -192,8 +192,11 @@ public class AccessibilitySettings extends BaseSupportFragment implements
+     @Override
+     public void onAttach(Context context) {
+         super.onAttach(context);
+-        use(AccessibilityHearingAidPreferenceController.class)
+-                .setFragmentManager(getFragmentManager());
++        final AccessibilityHearingAidPreferenceController hearingAidPreferenceController =
++                use(AccessibilityHearingAidPreferenceController.class);
++        if (hearingAidPreferenceController != null) {
++            hearingAidPreferenceController.setFragmentManager(getFragmentManager());
++        }
+     }
+ 
+     @Override
+diff --git a/src/com/android/settings/accessibility/HearingAidHelper.java b/src/com/android/settings/accessibility/HearingAidHelper.java
+index 4dbfc3c..a939c93 100644
+--- a/src/com/android/settings/accessibility/HearingAidHelper.java
++++ b/src/com/android/settings/accessibility/HearingAidHelper.java
+@@ -46,8 +46,10 @@ public class HearingAidHelper {
+     public HearingAidHelper(Context context) {
+         final LocalBluetoothManager localBluetoothManager =
+                 com.android.settings.bluetooth.Utils.getLocalBluetoothManager(context);
+-        mProfileManager = localBluetoothManager.getProfileManager();
+-        mCachedDeviceManager = localBluetoothManager.getCachedDeviceManager();
++        mProfileManager = localBluetoothManager != null
++                ? localBluetoothManager.getProfileManager() : null;
++        mCachedDeviceManager = localBluetoothManager != null
++                ? localBluetoothManager.getCachedDeviceManager() : null;
+         mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+     }
+ 
+@@ -92,6 +94,9 @@ public class HearingAidHelper {
+      * supported.
+      */
+     public boolean isHearingAidSupported() {
++        if (mBluetoothAdapter == null) {
++            return false;
++        }
+         final List<Integer> supportedList = mBluetoothAdapter.getSupportedProfiles();
+         return supportedList.contains(BluetoothProfile.HEARING_AID)
+                 || supportedList.contains(BluetoothProfile.HAP_CLIENT);
+@@ -101,6 +106,9 @@ public class HearingAidHelper {
+      * Checks if {@link BluetoothProfile#HEARING_AID} supported.
+      */
+     public boolean isAshaProfileSupported() {
++        if (mBluetoothAdapter == null) {
++            return false;
++        }
+         final List<Integer> supportedList = mBluetoothAdapter.getSupportedProfiles();
+         return supportedList.contains(BluetoothProfile.HEARING_AID);
+     }
+@@ -109,6 +117,9 @@ public class HearingAidHelper {
+      * Checks if {@link BluetoothProfile#HAP_CLIENT} supported.
+      */
+     public boolean isHapClientProfileSupported() {
++        if (mBluetoothAdapter == null) {
++            return false;
++        }
+         final List<Integer> supportedList = mBluetoothAdapter.getSupportedProfiles();
+         return supportedList.contains(BluetoothProfile.HAP_CLIENT);
+     }
+@@ -118,6 +129,9 @@ public class HearingAidHelper {
+      * profiles all ready.
+      */
+     public boolean isAllHearingAidRelatedProfilesReady() {
++        if (mProfileManager == null) {
++            return false;
++        }
+         HearingAidProfile hearingAidProfile = mProfileManager.getHearingAidProfile();
+         if (hearingAidProfile != null && !hearingAidProfile.isProfileReady()) {
+             return false;

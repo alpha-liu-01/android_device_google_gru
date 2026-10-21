@@ -1,0 +1,72 @@
+diff --git a/media/codec2/hal/client/client.cpp b/media/codec2/hal/client/client.cpp
+index 22859ce..b44278f 100644
+--- a/media/codec2/hal/client/client.cpp
++++ b/media/codec2/hal/client/client.cpp
+@@ -2769,8 +2769,11 @@ std::shared_ptr<Codec2Client> Codec2Client::_CreateFromIndex(size_t index) {
+                 LOG(VERBOSE) << "Client to Codec2 AIDL service \"" << name << "\" created";
+                 std::shared_ptr<c2_aidl::IConfigurable> configurable;
+                 ::ndk::ScopedAStatus transStatus = baseStore->getConfigurable(&configurable);
+-                CHECK(transStatus.isOk()) << "Codec2 AIDL service \"" << name << "\""
+-                                            "does not have IConfigurable.";
++                if (!transStatus.isOk()) {
++                    LOG(ERROR) << "Codec2 AIDL service \"" << name << "\""
++                               << " does not have IConfigurable.";
++                    return nullptr;
++                }
+                 return std::make_shared<Codec2Client>(baseStore, configurable, index);
+             } else {
+                 LOG(ERROR) << "Codec2 AIDL service \"" << name << "\" is not declared";
+@@ -2785,8 +2788,11 @@ std::shared_ptr<Codec2Client> Codec2Client::_CreateFromIndex(size_t index) {
+                             " inaccessible for unknown reasons.";
+         LOG(VERBOSE) << "Client to Codec2 service \"" << name << "\" created";
+         Return<sp<c2_hidl::IConfigurable>> transResult = baseStore->getConfigurable();
+-        CHECK(transResult.isOk()) << "Codec2 service \"" << name << "\""
+-                                    "does not have IConfigurable.";
++        if (!transResult.isOk()) {
++            LOG(ERROR) << "Codec2 service \"" << name << "\""
++                       << " does not have IConfigurable.";
++            return nullptr;
++        }
+         sp<c2_hidl::IConfigurable> configurable =
+             static_cast<sp<c2_hidl::IConfigurable>>(transResult);
+         return std::make_shared<Codec2Client>(baseStore, configurable, index);
+diff --git a/media/codec2/vndk/C2AllocatorIon.cpp b/media/codec2/vndk/C2AllocatorIon.cpp
+index 582a993..019fa6b 100644
+--- a/media/codec2/vndk/C2AllocatorIon.cpp
++++ b/media/codec2/vndk/C2AllocatorIon.cpp
+@@ -520,6 +520,10 @@ std::shared_ptr<const C2Allocator::Traits> C2AllocatorIon::getTraits() const {
+ void C2AllocatorIon::setUsageMapper(
+         const UsageMapperFn &mapper, uint64_t minUsage, uint64_t maxUsage, uint64_t blockSize) {
+     std::lock_guard<std::mutex> lock(mUsageMapperLock);
++    // ion_open() leaves mTraits null. Dereferencing it killed media.swcodec.
++    if (mTraits == nullptr) {
++        return;
++    }
+     mUsageMapperCache.clear();
+     mUsageMapperLru.clear();
+     mUsageMapper = mapper;
+diff --git a/media/codec2/vndk/C2Store.cpp b/media/codec2/vndk/C2Store.cpp
+index a494b70..13cc6e7 100644
+--- a/media/codec2/vndk/C2Store.cpp
++++ b/media/codec2/vndk/C2Store.cpp
+@@ -147,7 +147,9 @@ c2_status_t C2PlatformAllocatorStoreImpl::fetchAllocator(
+     case C2PlatformAllocatorStore::ION: /* also ::DMABUFHEAP */
+         if (using_ion())
+             *allocator = fetchIonAllocator();
+-        else
++        // /dev/ion can exist while ion_open() fails. A null ION allocator
++        // used to crash in setUsageMapper and take system_server down with it.
++        if (*allocator == nullptr)
+             *allocator = fetchDmaBufAllocator();
+         break;
+ 
+@@ -340,6 +342,9 @@ std::shared_ptr<C2Allocator> C2PlatformAllocatorStoreImpl::fetchIonAllocator() {
+             componentStore = _mComponentStore;
+         }
+         allocator = std::make_shared<C2AllocatorIon>(C2PlatformAllocatorStore::ION);
++        if (allocator->status() != C2_OK) {
++            return nullptr;
++        }
+         UseComponentStoreForIonAllocator(allocator, componentStore);
+         gIonAllocator = allocator;
+     }

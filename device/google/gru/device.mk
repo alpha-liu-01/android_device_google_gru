@@ -51,6 +51,7 @@ PRODUCT_PRODUCT_PROPERTIES += \
     ro.adb.secure=0 \
     ro.sf.lcd_density=260 \
     persist.sys.usb.config=adb \
+    persist.wm.debug.desktop_experience_devopts=1 \
     sys.brightness.disable_gamma_conversion=true \
     wifi.interface=wlan0 \
     wifi.direct.interface=p2p-dev-wlan0 \
@@ -85,6 +86,7 @@ PRODUCT_VENDOR_PROPERTIES += \
     service.adb.tcp.port=5555 \
     ro.opengles.version=196609 \
     vendor.hwc.drm.device=/dev/dri/card0 \
+    vendor.hwc.drm.internal_display_names=DSI-1,eDP-1 \
     vendor.minigbm.device=/dev/dri/card0 \
     debug.renderengine.backend=skiaglthreaded \
     debug.hwui.renderer=skiagl \
@@ -93,6 +95,7 @@ PRODUCT_VENDOR_PROPERTIES += \
 FORCE_USE_ANDROIDMK_FOR_WPA_CONF := true
 PRODUCT_PACKAGES += \
     hwservicemanager \
+    mapper.minigbm_upstream \
     android.hardware.bluetooth-service.default \
     android.hardware.sensors-service.multihal \
     android.hardware.sensors@2.1-gru-subhal \

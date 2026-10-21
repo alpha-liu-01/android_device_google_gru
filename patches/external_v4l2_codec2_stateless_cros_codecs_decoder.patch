@@ -31,8 +31,35 @@ index ecb5fed..9d96ba1 100644
          "libstagefright_bufferqueue_helper",
          "libstagefright_foundation",
          "libui",
+diff --git a/components/DecodeComponent.cpp b/components/DecodeComponent.cpp
+index 00880d7..2cff4c2 100644
+--- a/components/DecodeComponent.cpp
++++ b/components/DecodeComponent.cpp
+@@ -523,6 +523,22 @@ void DecodeComponent::onOutputFrameReady(std::unique_ptr<VideoFrame> frame) {
+     }
+     C2Work* work = it->second.get();
+ 
++    // CCodec sizes its ByteBuffer output arrays from the picture size, so it has to learn about
++    // resolution changes before it receives the first frame of the new size.
++    const Rect& visibleRect = frame->getVisibleRect();
++    C2StreamPictureSizeInfo::output size(0u, visibleRect.width(), visibleRect.height());
++    C2StreamPictureSizeInfo::output currentSize;
++    if (mIntfImpl->query({&currentSize}, {}, C2_DONT_BLOCK, nullptr) == C2_OK &&
++        (currentSize.width != size.width || currentSize.height != size.height)) {
++        std::vector<std::unique_ptr<C2SettingResult>> failures;
++        if (mIntfImpl->config({&size}, C2_MAY_BLOCK, &failures) == C2_OK) {
++            ALOGI("Output size changed to %ux%u", size.width, size.height);
++            work->worklets.front()->output.configUpdate.push_back(C2Param::Copy(size));
++        } else {
++            ALOGE("Failed to update the output size to %ux%u", size.width, size.height);
++        }
++    }
++
+     C2ConstGraphicBlock constBlock = std::move(frame)->getGraphicBlock();
+     std::shared_ptr<C2Buffer> buffer = C2Buffer::CreateGraphicBuffer(std::move(constBlock));
+     if (mPendingColorAspectsChange &&
 diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
-index 558c0ea..14915f6 100644
+index 558c0ea..31be487 100644
 --- a/components/DecodeInterface.cpp
 +++ b/components/DecodeInterface.cpp
 @@ -29,6 +29,8 @@ constexpr size_t k4KArea = 3840 * 2160;
@@ -65,7 +92,17 @@ index 558c0ea..14915f6 100644
  DecodeInterface::DecodeInterface(const std::string& name,
                                   const std::shared_ptr<C2ReflectorHelper>& helper,
                                   const SupportedCapabilities& caps)
-@@ -328,12 +344,16 @@ DecodeInterface::DecodeInterface(const std::string& name,
+@@ -320,20 +336,24 @@ DecodeInterface::DecodeInterface(const std::string& name,
+                          .withDefault(new C2StreamPictureSizeInfo::output(
+                                  0u, std::min(320, maxSize.width), std::min(240, maxSize.height)))
+                          .withFields({
+-                                 C2F(mSize, width).inRange(16, maxSize.width, 16),
+-                                 C2F(mSize, height).inRange(16, maxSize.height, 16),
++                                 C2F(mSize, width).inRange(2, maxSize.width),
++                                 C2F(mSize, height).inRange(2, maxSize.height),
+                          })
+                          .withSetter(SizeSetter)
+                          .build());
  
      addParameter(
              DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)

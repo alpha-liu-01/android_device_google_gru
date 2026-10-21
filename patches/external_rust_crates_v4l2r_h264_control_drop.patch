@@ -1,0 +1,29 @@
+diff --git a/lib/src/controls.rs b/lib/src/controls.rs
+index 9b4ec5f..3ffdf75 100644
+--- a/lib/src/controls.rs
++++ b/lib/src/controls.rs
+@@ -517,6 +517,24 @@ impl<T: ExtControlTrait> Drop for SafeExtControl<T> {
+                     bindings::V4L2_CID_STATELESS_VP8_FRAME => {
+                         let _ = Box::from_raw(self.0.__bindgen_anon_1.p_vp8_frame);
+                     }
++                    bindings::V4L2_CID_STATELESS_H264_SPS => {
++                        let _ = Box::from_raw(self.0.__bindgen_anon_1.p_h264_sps);
++                    }
++                    bindings::V4L2_CID_STATELESS_H264_PPS => {
++                        let _ = Box::from_raw(self.0.__bindgen_anon_1.p_h264_pps);
++                    }
++                    bindings::V4L2_CID_STATELESS_H264_SCALING_MATRIX => {
++                        let _ = Box::from_raw(self.0.__bindgen_anon_1.p_h264_scaling_matrix);
++                    }
++                    bindings::V4L2_CID_STATELESS_H264_PRED_WEIGHTS => {
++                        let _ = Box::from_raw(self.0.__bindgen_anon_1.p_h264_pred_weights);
++                    }
++                    bindings::V4L2_CID_STATELESS_H264_SLICE_PARAMS => {
++                        let _ = Box::from_raw(self.0.__bindgen_anon_1.p_h264_slice_params);
++                    }
++                    bindings::V4L2_CID_STATELESS_H264_DECODE_PARAMS => {
++                        let _ = Box::from_raw(self.0.__bindgen_anon_1.p_h264_decode_params);
++                    }
+                     _ => (),
+                 }
+             }

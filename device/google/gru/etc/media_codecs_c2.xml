@@ -19,26 +19,34 @@
             <Limit name="blocks-per-second" range="1-1105920" />
             <Limit name="bitrate" range="1-62500000" />
             <Limit name="concurrent-instances" max="8" />
+            <Limit name="performance-point-1920x1080" value="60" />
+            <Limit name="performance-point-3840x2160" value="24" />
             <Feature name="adaptive-playback" />
         </MediaCodec>
 
+        <!-- hantro sustains about 45 fps at 1080p. -->
         <MediaCodec name="c2.v4l2.vp8.decoder" type="video/x-vnd.on2.vp8">
             <Limit name="size" min="48x48" max="1920x1088" />
             <Limit name="alignment" value="2x2" />
             <Limit name="block-size" value="16x16" />
-            <Limit name="blocks-per-second" range="1-489600" />
+            <Limit name="blocks-per-second" range="1-367200" />
             <Limit name="bitrate" range="1-62500000" />
             <Limit name="concurrent-instances" max="8" />
+            <Limit name="performance-point-1280x720" value="60" />
+            <Limit name="performance-point-1920x1080" value="30" />
             <Feature name="adaptive-playback" />
         </MediaCodec>
 
+        <!-- rkvdec sustains about 33 fps at 2160p. -->
         <MediaCodec name="c2.v4l2.vp9.decoder" type="video/x-vnd.on2.vp9">
             <Limit name="size" min="64x64" max="4096x2304" />
             <Limit name="alignment" value="2x2" />
             <Limit name="block-size" value="16x16" />
-            <Limit name="blocks-per-second" range="1-2211840" />
+            <Limit name="blocks-per-second" range="1-1105920" />
             <Limit name="bitrate" range="1-62500000" />
             <Limit name="concurrent-instances" max="8" />
+            <Limit name="performance-point-1920x1080" value="60" />
+            <Limit name="performance-point-3840x2160" value="30" />
             <Feature name="adaptive-playback" />
         </MediaCodec>
     </Decoders>

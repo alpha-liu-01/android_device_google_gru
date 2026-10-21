@@ -538,8 +538,24 @@ index 0000000..19daff3
 +    let (decoder, event) = unsafe { (&mut *decoder, &mut *event) };
 +    guard(false, || decoder.next_event(event))
 +}
+diff --git a/src/backend/v4l2/decoder.rs b/src/backend/v4l2/decoder.rs
+index 72b119d..7aa3bf8 100644
+--- a/src/backend/v4l2/decoder.rs
++++ b/src/backend/v4l2/decoder.rs
+@@ -30,6 +30,11 @@ pub trait V4l2StreamInfo {
+     fn bit_depth(&self) -> usize;
+     // Returns the queried DecodedFormat for the current stream.
+     fn get_decoded_format(&self, device: Arc<VideoDevice>) -> Result<DecodedFormat, String>;
++    // Sets the stream-level controls the driver validates against the new OUTPUT format when
++    // streaming starts. Called after the OUTPUT format is set and before STREAMON.
++    fn set_stream_controls(&self, _device: &Arc<VideoDevice>) -> Result<(), String> {
++        Ok(())
++    }
+     // The following are used for exposing color aspect information for the stream.
+     fn range(&self) -> ColorRange;
+     fn primaries(&self) -> ColorPrimaries;
 diff --git a/src/backend/v4l2/decoder/stateless.rs b/src/backend/v4l2/decoder/stateless.rs
-index a810ce4..da3d9ed 100644
+index a810ce4..5ae76d3 100644
 --- a/src/backend/v4l2/decoder/stateless.rs
 +++ b/src/backend/v4l2/decoder/stateless.rs
 @@ -76,10 +76,12 @@ pub struct V4l2StatelessDecoderHandle<V: VideoFrame> {
@@ -556,7 +572,21 @@ index a810ce4..da3d9ed 100644
          }
      }
  }
-@@ -184,7 +186,14 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
+@@ -165,7 +167,12 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
+         let coded_resolution = stream_params.coded_size().clone();
+         let min_num_frames = stream_params.min_num_frames();
+ 
+-        self.device.initialize_output_queue(fourcc, coded_resolution)?;
++        // A flush followed by a key frame with a new format starts a sequence without going
++        // through reset_backend(), so the queues may still be streaming the previous one.
++        self.device.reset_queues().map_err(|e| StatelessBackendError::Other(e.into()))?;
++        self.device.initialize_output_queue(fourcc, coded_resolution, |device| {
++            stream_params.set_stream_controls(device)
++        })?;
+ 
+         let format = stream_params
+             .get_decoded_format(self.device.get_video_device())
+@@ -184,7 +191,14 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
          self.stream_info.transfer = stream_params.transfer();
          self.stream_info.matrix = stream_params.matrix();
  
@@ -934,6 +964,34 @@ index 48b068c..2b20887 100644
      /// Parse a single VP9 frame.
      pub fn parse_frame<'a>(
          &mut self,
+diff --git a/src/decoder/stateless/h264/v4l2.rs b/src/decoder/stateless/h264/v4l2.rs
+index 9dadf43..b49a508 100644
+--- a/src/decoder/stateless/h264/v4l2.rs
++++ b/src/decoder/stateless/h264/v4l2.rs
+@@ -13,6 +13,8 @@ use v4l2r::controls::codec::H264ScalingMatrix;
+ use v4l2r::controls::codec::H264Sps;
+ use v4l2r::controls::SafeExtControl;
+ use v4l2r::device::Device as VideoDevice;
++use v4l2r::ioctl;
++use v4l2r::ioctl::CtrlWhich;
+ use v4l2r::ioctl::FormatIterator;
+ use v4l2r::QueueType;
+ 
+@@ -85,6 +87,14 @@ impl V4l2StreamInfo for &Rc<Sps> {
+             .into())
+     }
+ 
++    fn set_stream_controls(&self, device: &Arc<VideoDevice>) -> Result<(), String> {
++        // rkvdec validates the current SPS against the OUTPUT format on STREAMON, which fails
++        // when the stream switches to a smaller resolution while the previous SPS is still set.
++        let mut sps = SafeExtControl::<H264Sps>::from(v4l2_ctrl_h264_sps::from(&***self));
++        ioctl::s_ext_ctrls(device, CtrlWhich::Current, &mut sps)
++            .map_err(|e| format!("Failed to set the H.264 SPS control: {e}"))
++    }
++
+     fn range(&self) -> ColorRange {
+         self.vui_parameters.video_full_range_flag.into()
+     }
 diff --git a/src/decoder/stateless/vp9/v4l2.rs b/src/decoder/stateless/vp9/v4l2.rs
 index 5c5ca9e..9927be1 100644
 --- a/src/decoder/stateless/vp9/v4l2.rs
@@ -1072,10 +1130,61 @@ index 958c2a0..66be7c2 100644
 +    }
 +}
 diff --git a/src/device/v4l2/stateless/device.rs b/src/device/v4l2/stateless/device.rs
-index 4e07983..b5c372f 100644
+index 4e07983..a5ea3ec 100644
 --- a/src/device/v4l2/stateless/device.rs
 +++ b/src/device/v4l2/stateless/device.rs
-@@ -127,7 +127,7 @@ impl<V: VideoFrame> DeviceHandle<V> {
+@@ -5,7 +5,7 @@
+ use anyhow::anyhow;
+ use std::cell::RefCell;
+ use std::collections::HashMap;
+-use std::os::fd::{AsRawFd, RawFd};
++use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+ use std::rc::{Rc, Weak};
+ use std::sync::Arc;
+ use std::thread::sleep;
+@@ -36,7 +36,7 @@ use crate::Resolution;
+ //TODO: handle DRC at runtime
+ struct DeviceHandle<V: VideoFrame> {
+     video_device: Arc<VideoDevice>,
+-    media_device: RawFd,
++    media_device: OwnedFd,
+     output_queue: V4l2OutputQueue,
+     capture_queue: V4l2CaptureQueue<V>,
+     requests: HashMap<u64, Weak<RefCell<V4l2Request<V>>>>,
+@@ -64,6 +64,8 @@ impl<V: VideoFrame> DeviceHandle<V> {
+         let media_device =
+             open(&media_device_path, OFlag::O_RDWR | OFlag::O_CLOEXEC, Mode::empty())
+                 .map_err(|e| NewStatelessDecoderError::DriverInitialization(e.into()))?;
++        // SAFETY: `open` just returned this descriptor and nothing else owns it.
++        let media_device = unsafe { OwnedFd::from_raw_fd(media_device) };
+         let output_queue = V4l2OutputQueue::new(video_device.clone())?;
+         let capture_queue = V4l2CaptureQueue::new(video_device.clone())?;
+         Ok(Self {
+@@ -76,12 +78,17 @@ impl<V: VideoFrame> DeviceHandle<V> {
+     }
+ 
+     pub fn reset_queues(&mut self) -> Result<(), QueueError> {
+-        self.output_queue
+-            .reset(self.video_device.clone())
+-            .map_err(|e| QueueError::ResetOutputQueue(e.into()))?;
+-        self.capture_queue
+-            .reset(self.video_device.clone())
+-            .map_err(|e| QueueError::ResetCaptureQueue(e.into()))
++        if self.output_queue.is_streaming() {
++            self.output_queue
++                .reset(self.video_device.clone())
++                .map_err(|e| QueueError::ResetOutputQueue(e.into()))?;
++        }
++        if self.capture_queue.is_streaming() {
++            self.capture_queue
++                .reset(self.video_device.clone())
++                .map_err(|e| QueueError::ResetCaptureQueue(e.into()))?;
++        }
++        Ok(())
+     }
+ 
+     fn alloc_request(&self) -> ioctl::Request {
+@@ -127,7 +134,7 @@ impl<V: VideoFrame> DeviceHandle<V> {
      }
      fn sync(&mut self, timestamp: u64) -> V4l2CaptureBuffer<V> {
          let mut back_off_duration = Duration::from_millis(1);
@@ -1084,7 +1193,22 @@ index 4e07983..b5c372f 100644
          loop {
              match self.capture_queue.dequeue_buffer() {
                  Ok(Some(buffer)) => {
-@@ -190,10 +190,11 @@ impl<V: VideoFrame> V4l2Device<V> {
+@@ -180,20 +187,25 @@ impl<V: VideoFrame> V4l2Device<V> {
+         &mut self,
+         format: Fourcc,
+         coded_size: Resolution,
++        before_stream_on: impl FnOnce(&Arc<VideoDevice>) -> Result<(), String>,
+     ) -> Result<(), anyhow::Error> {
+         if self.handle.is_none() {
+             self.handle = Some(Rc::new(RefCell::new(DeviceHandle::new(format)?)));
+         }
+ 
+         let mut handle = self.handle.as_ref().ok_or(QueueError::InvalidDevice)?.borrow_mut();
+-        handle.output_queue.initialize(format, coded_size)?;
++        let video_device = handle.video_device.clone();
++        handle
++            .output_queue
++            .initialize(format, coded_size, || before_stream_on(&video_device))?;
          Ok(())
      }
  
@@ -1099,10 +1223,45 @@ index 4e07983..b5c372f 100644
  
      pub fn alloc_request(
 diff --git a/src/device/v4l2/stateless/queue.rs b/src/device/v4l2/stateless/queue.rs
-index c5f318a..376337d 100644
+index c5f318a..0456412 100644
 --- a/src/device/v4l2/stateless/queue.rs
 +++ b/src/device/v4l2/stateless/queue.rs
-@@ -311,7 +311,10 @@ impl<V: VideoFrame> V4l2CaptureBuffer<V> {
+@@ -108,6 +108,8 @@ pub enum QueueError {
+     ResetCaptureQueue(anyhow::Error),
+     #[error("unable to access device handle.")]
+     InvalidDevice,
++    #[error("failed to set stream controls: {0}")]
++    StreamControls(String),
+ }
+ 
+ impl From<QueueError> for DecodeError {
+@@ -237,6 +239,7 @@ impl V4l2OutputQueue {
+         &mut self,
+         fourcc: Fourcc,
+         resolution: Resolution,
++        before_stream_on: impl FnOnce() -> Result<(), String>,
+     ) -> Result<&mut Self, QueueError> {
+         self.handle.replace(match self.handle.take() {
+             V4l2OutputQueueHandle::Init(mut handle) => {
+@@ -263,6 +266,7 @@ impl V4l2OutputQueue {
+ 
+                 check_requested_buffer_count(NUM_OUTPUT_BUFFERS, handle.num_free_buffers())?;
+ 
++                before_stream_on().map_err(QueueError::StreamControls)?;
+                 handle.stream_on()?;
+ 
+                 V4l2OutputQueueHandle::Streaming(handle.into())
+@@ -279,6 +283,9 @@ impl V4l2OutputQueue {
+             _ => 0,
+         }
+     }
++    pub fn is_streaming(&self) -> bool {
++        matches!(&*self.handle.borrow(), V4l2OutputQueueHandle::Streaming(_))
++    }
+     pub fn alloc_buffer(&self) -> Result<V4l2OutputBuffer, DecodeError> {
+         let handle = &*self.handle.borrow();
+         match handle {
+@@ -311,7 +318,10 @@ impl<V: VideoFrame> V4l2CaptureBuffer<V> {
          Self { frame, handle }
      }
      pub fn timestamp(&self) -> u64 {
@@ -1114,15 +1273,50 @@ index c5f318a..376337d 100644
      }
      // TODO enable once upstream v4l2r has rolled
      //    pub fn has_error(&self) -> bool {
-@@ -420,4 +423,8 @@ impl<V: VideoFrame> V4l2CaptureQueue<V> {
+@@ -420,4 +430,12 @@ impl<V: VideoFrame> V4l2CaptureQueue<V> {
              _ => 0,
          }
      }
++
++    pub fn is_streaming(&self) -> bool {
++        matches!(&*self.handle.borrow(), V4l2CaptureQueueHandle::Streaming(_))
++    }
 +
 +    pub fn coded_size(&self) -> (u32, u32) {
 +        (self.format.width, self.format.height)
 +    }
  }
+diff --git a/src/device/v4l2/utils.rs b/src/device/v4l2/utils.rs
+index 054bc58..223a173 100644
+--- a/src/device/v4l2/utils.rs
++++ b/src/device/v4l2/utils.rs
+@@ -3,6 +3,7 @@
+ // found in the LICENSE file.
+ 
+ use std::ffi::c_char;
++use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+ use std::path::PathBuf;
+ use std::sync::Arc;
+ 
+@@ -100,7 +101,8 @@ pub fn find_media_device(cap: &Capability) -> Option<PathBuf> {
+         let media_device_path = PathBuf::from(format!("{}{}", media_device_prefix, dev_no));
+         let media_device =
+             match open(&media_device_path, OFlag::O_RDWR | OFlag::O_CLOEXEC, Mode::empty()) {
+-                Ok(media_device) => media_device,
++                // SAFETY: `open` just returned this descriptor and nothing else owns it.
++                Ok(media_device) => unsafe { OwnedFd::from_raw_fd(media_device) },
+                 Err(_) => continue,
+             };
+ 
+@@ -111,7 +113,7 @@ pub fn find_media_device(cap: &Capability) -> Option<PathBuf> {
+             // SAFETY: This should be safe, as the `media_ioc_device_info` ioctl is called with
+             //  `media_device` - a valid file descriptor  and `media_device_info` - a valid pointer
+             //  to `MediaDeviceInfo` struct.
+-            match media_ioc_device_info(media_device, &mut media_device_info) {
++            match media_ioc_device_info(media_device.as_raw_fd(), &mut media_device_info) {
+                 Ok(_) => Some(media_device_info),
+                 Err(_) => None,
+             }
 diff --git a/src/video_frame.rs b/src/video_frame.rs
 index 1afa445..510414c 100644
 --- a/src/video_frame.rs

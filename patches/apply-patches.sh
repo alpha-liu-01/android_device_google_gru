@@ -65,6 +65,7 @@ LINEAGE_PATCH_MAP=(
     "external/XMP-Toolkit-SDK:external_XMP-Toolkit-SDK_vendor_available.patch"
     "external/drm_hwcomposer:external_drm_hwcomposer_plane_scaling.patch"
     "external/google-highway:external_google-highway_vendor_available.patch"
+    "external/libcamera:external_libcamera_rkisp1_camera_hal.patch"
     "external/minigbm:external_minigbm_rkvdec_nv12.patch"
     "external/minigbm-upstream:external_minigbm-upstream_rkvdec_nv12.patch"
     "external/rust/crates/v4l2r:external_rust_crates_v4l2r_h264_control_drop.patch"
@@ -94,6 +95,7 @@ if [[ -n "${KERNEL_ROOT}" ]]; then
         "kernel_6.6.34_cros_ec_keyb_s3_power_button_wakeup.patch"
         "kernel_6.6.34_cros_usbpd_charger_online_notify.patch"
         "kernel_6.6.34_drm_master_and_fbdev_emulation.patch"
+        "kernel_6.6.34_rkisp1_min_buffers_needed.patch"
     )
     for kp in "${KERNEL_PATCHES[@]}"; do
         apply_patch "${KERNEL_ROOT}" "${PATCH_DIR}/${kp}"

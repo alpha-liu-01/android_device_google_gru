@@ -5,9 +5,10 @@
 # DMA-BUF CMA heap
 /dev/dma_heap/reserved                                                      0444   system     system
 
-# V4L2 video & media controller nodes (hantro-vpu & rockchip-vdec)
+# V4L2 video, subdev & media controller nodes (hantro-vpu, rockchip-vdec & rkisp1)
 /dev/video*                                                                 0660   media      camera
 /dev/media*                                                                 0660   media      camera
+/dev/v4l-subdev*                                                            0660   media      camera
 
 # IIO sensors (cros-ec-accel, cros-ec-gyro)
 /dev/iio:device*                                                            0660   system     system

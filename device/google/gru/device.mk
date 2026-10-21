@@ -88,6 +88,7 @@ PRODUCT_VENDOR_PROPERTIES += \
     persist.sys.zram_enabled=1 \
     service.adb.tcp.port=5555 \
     ro.opengles.version=196609 \
+    ro.hardware.camera=libcamera \
     vendor.hwc.drm.device=/dev/dri/card0 \
     vendor.hwc.drm.internal_display_names=DSI-1,eDP-1 \
     vendor.minigbm.device=/dev/dri/card0 \
@@ -109,6 +110,12 @@ PRODUCT_PACKAGES += \
     hwservicemanager \
     mapper.minigbm_upstream \
     android.hardware.bluetooth-service.default \
+    android.hardware.camera.provider-service.lineage \
+    camera.libcamera \
+    ipa_rkisp1 \
+    cam \
+    libcamera_ipa_rkisp1_ov5695.yaml \
+    libcamera_ipa_rkisp1_ov2685.yaml \
     android.hardware.sensors-service.multihal \
     android.hardware.sensors@2.1-gru-subhal \
     android.hardware.wifi-service \
@@ -138,6 +145,8 @@ PRODUCT_COPY_FILES += \
     frameworks/av/services/audiopolicy/config/usb_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/usb_audio_policy_configuration.xml \
     $(LOCAL_PATH)/etc/sensors/hals.conf:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/hals.conf \
     $(LOCAL_PATH)/etc/sensors/sensor_hal_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/sensor_hal_configuration.xml \
+    $(LOCAL_PATH)/etc/camera/camera_hal.yaml:$(TARGET_COPY_OUT_VENDOR)/etc/camera/libcamera/camera_hal.yaml \
+    $(LOCAL_PATH)/etc/camera/camera_hal.yaml:$(TARGET_COPY_OUT_VENDOR)/etc/libcamera/camera_hal.yaml \
     $(LOCAL_PATH)/idc/Elan_Touchscreen.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Elan_Touchscreen.idc \
     $(LOCAL_PATH)/idc/Vendor_04f3_Product_0b03.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Vendor_04f3_Product_0b03.idc \
     $(LOCAL_PATH)/idc/Vendor_2d1f_Product_0036.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Vendor_2d1f_Product_0036.idc \
@@ -149,6 +158,8 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.software.app_widgets.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.app_widgets.xml \
     frameworks/native/data/etc/android.software.backup.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.backup.xml \
     frameworks/native/data/etc/android.software.voice_recognizers.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.voice_recognizers.xml \
+    frameworks/native/data/etc/android.hardware.camera.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.xml \
+    frameworks/native/data/etc/android.hardware.camera.front.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.camera.front.xml \
     frameworks/native/data/etc/android.hardware.sensor.accelerometer.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.accelerometer.xml \
     frameworks/native/data/etc/android.hardware.sensor.gyroscope.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.gyroscope.xml \
     frameworks/native/data/etc/android.software.print.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.print.xml \
@@ -216,12 +227,15 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/lz4.ko:$(TARGET_COPY_OUT_VENDOR)/lib/lz4.ko \
     $(LOCAL_PATH)/modules/mac80211.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mac80211.ko \
     $(LOCAL_PATH)/modules/mc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/mc.ko \
+    $(LOCAL_PATH)/modules/ov2685.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ov2685.ko \
+    $(LOCAL_PATH)/modules/ov5695.ko:$(TARGET_COPY_OUT_VENDOR)/lib/ov5695.ko \
     $(LOCAL_PATH)/modules/panfrost.ko:$(TARGET_COPY_OUT_VENDOR)/lib/panfrost.ko \
     $(LOCAL_PATH)/modules/raw_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/raw_diag.ko \
     $(LOCAL_PATH)/modules/rfcomm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfcomm.ko \
     $(LOCAL_PATH)/modules/rfkill.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfkill.ko \
     $(LOCAL_PATH)/modules/rk3399_dmc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rk3399_dmc.ko \
     $(LOCAL_PATH)/modules/rockchip-dfi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-dfi.ko \
+    $(LOCAL_PATH)/modules/rockchip-isp1.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-isp1.ko \
     $(LOCAL_PATH)/modules/rockchip-vdec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-vdec.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \
     $(LOCAL_PATH)/modules/rtc-cros-ec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rtc-cros-ec.ko \
@@ -249,6 +263,8 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/tcp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/tcp_diag.ko \
     $(LOCAL_PATH)/modules/udp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/udp_diag.ko \
     $(LOCAL_PATH)/modules/uhid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uhid.ko \
+    $(LOCAL_PATH)/modules/v4l2-async.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-async.ko \
+    $(LOCAL_PATH)/modules/v4l2-fwnode.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-fwnode.ko \
     $(LOCAL_PATH)/modules/v4l2-h264.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-h264.ko \
     $(LOCAL_PATH)/modules/v4l2-mem2mem.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-mem2mem.ko \
     $(LOCAL_PATH)/modules/v4l2-vp9.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-vp9.ko \
@@ -256,6 +272,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/videobuf2-dma-contig.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-dma-contig.ko \
     $(LOCAL_PATH)/modules/videobuf2-memops.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-memops.ko \
     $(LOCAL_PATH)/modules/videobuf2-v4l2.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-v4l2.ko \
+    $(LOCAL_PATH)/modules/videobuf2-vmalloc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-vmalloc.ko \
     $(LOCAL_PATH)/modules/videodev.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videodev.ko \
     $(LOCAL_PATH)/modules/zram.ko:$(TARGET_COPY_OUT_VENDOR)/lib/zram.ko
 

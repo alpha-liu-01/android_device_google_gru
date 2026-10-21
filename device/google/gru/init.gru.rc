@@ -86,6 +86,12 @@ on early-init
     insmod /vendor/lib/videobuf2-memops.ko
     insmod /vendor/lib/videobuf2-dma-contig.ko
     insmod /vendor/lib/videobuf2-v4l2.ko
+    insmod /vendor/lib/videobuf2-vmalloc.ko
+    insmod /vendor/lib/v4l2-async.ko
+    insmod /vendor/lib/v4l2-fwnode.ko
+    insmod /vendor/lib/ov5695.ko
+    insmod /vendor/lib/ov2685.ko
+    insmod /vendor/lib/rockchip-isp1.ko
     insmod /vendor/lib/v4l2-mem2mem.ko
     insmod /vendor/lib/v4l2-h264.ko
     insmod /vendor/lib/v4l2-vp9.ko

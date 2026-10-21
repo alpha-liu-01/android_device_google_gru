@@ -141,9 +141,11 @@ Run the idempotent setup script to install `device/google/gru` into the LineageO
 ```bash
 cd ~/lineage-23.2
 source build/envsetup.sh
-lunch lineage_gru-trunk_staging-userdebug
+breakfast gru    # same as: lunch lineage_gru-bp4a-userdebug
 m superimage ramdisk-nodeps futility-host sgdisk simg2img mke2fs make_f2fs fsck.f2fs
 ```
+
+Always build with the `bp4a` release (what `breakfast` selects). `trunk_staging` sets `RELEASE_SM_OPEN_DECLARED_PASSTHROUGH_HAL=true`, which drops the standalone `/vendor/lib64/hw/mapper.minigbm_upstream.so` and its VINTF fragment; SurfaceFlinger then aborts with `gralloc-mapper is missing` and the device never lights the backlight. Switching between the two releases in one `out/` also triggers an `installclean`, so rebuild all images after switching.
 
 ### 4. Package the Bootable SD Card Image (`.img` & `.zip`)
 

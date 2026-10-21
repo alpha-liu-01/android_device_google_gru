@@ -99,14 +99,32 @@ if [ -z "$CURR_PART_SECTORS" ] || [ -z "$TOTAL_DISK_SECTORS" ] || [ -z "$START_S
     exit 1
 fi
 
-# 3. Check if userdata already occupies the disk (within 16 MiB / 32768 sectors margin)
+# F2FS superblock sits at byte 1024; block_count (__le64, 4 KiB blocks) is at +36.
+f2fs_sectors() {
+    BLOCKS=$(od -A n -t u8 -j 1060 -N 8 "$USERDATA_DEV" 2>/dev/null | tr -d ' ')
+    if [ -n "$BLOCKS" ]; then
+        echo $(( BLOCKS * 8 ))
+    else
+        echo 0
+    fi
+}
+
+# 3. Grow the partition if it stops short of the disk end (16 MiB / 32768 sectors margin),
+#    and grow F2FS if it stops short of the partition end. A run that grew the GPT but
+#    not the filesystem is finished on the next boot.
 TARGET_MIN_SECTORS=$(( TOTAL_DISK_SECTORS - START_SECTOR - 32768 ))
-if [ "$CURR_PART_SECTORS" -ge "$TARGET_MIN_SECTORS" ]; then
-    log "Userdata is already expanded ($CURR_PART_SECTORS sectors >= $TARGET_MIN_SECTORS). Nothing to do."
+GROW_PART=0
+if [ "$CURR_PART_SECTORS" -lt "$TARGET_MIN_SECTORS" ]; then
+    GROW_PART=1
+fi
+FS_SECTORS=$(f2fs_sectors)
+log "F2FS size: $FS_SECTORS sectors"
+if [ "$GROW_PART" -eq 0 ] && [ "$FS_SECTORS" -ge $(( CURR_PART_SECTORS - 32768 )) ]; then
+    log "Userdata is already expanded ($CURR_PART_SECTORS partition / $FS_SECTORS F2FS sectors). Nothing to do."
     exit 0
 fi
 
-log "Expanding userdata from $CURR_PART_SECTORS sectors to fill disk ($TOTAL_DISK_SECTORS total sectors)..."
+log "Expanding userdata (partition=$CURR_PART_SECTORS, F2FS=$FS_SECTORS, disk=$TOTAL_DISK_SECTORS sectors)..."
 
 # 4. If /data was already mounted in first_stage_mount, unmount it temporarily
 #    before early_hal / post-fs-data so resize.f2fs can run cleanly.
@@ -123,37 +141,43 @@ if grep -qw "/data" /proc/mounts 2>/dev/null; then
     log "Successfully unmounted /data."
 fi
 
-# 5. Relocate secondary GPT header to the physical end of the SD card
-log "Running sgdisk --move-second-header $DISK..."
-/system/bin/sgdisk --move-second-header "$DISK"
+if [ "$GROW_PART" -eq 1 ]; then
+    # 5. Relocate secondary GPT header to the physical end of the SD card
+    log "Running sgdisk --move-second-header $DISK..."
+    /system/bin/sgdisk --move-second-header "$DISK"
+    log "sgdisk --move-second-header status: $?"
 
-# 6. Read PARTUUID to preserve it across partition recreation
-PARTUUID=$(/system/bin/sgdisk --info="$PART" "$DISK" 2>/dev/null | grep -i "Partition unique GUID" | awk '{print $NF}')
-log "Preserving PARTUUID=$PARTUUID"
+    # 6. Read PARTUUID to preserve it across partition recreation
+    PARTUUID=$(/system/bin/sgdisk --info="$PART" "$DISK" 2>/dev/null | grep -i "Partition unique GUID" | awk '{print $NF}')
+    log "Preserving PARTUUID=$PARTUUID"
 
-# 7. Recreate userdata partition extending to the end of the disk
-log "Recreating partition $PART: start=$START_SECTOR, end=0..."
-if [ -n "$PARTUUID" ]; then
-    /system/bin/sgdisk --delete="$PART" --new="${PART}:${START_SECTOR}:0" --partition-guid="${PART}:${PARTUUID}" --change-name="${PART}:userdata" "$DISK"
-else
-    /system/bin/sgdisk --delete="$PART" --new="${PART}:${START_SECTOR}:0" --change-name="${PART}:userdata" "$DISK"
-fi
-
-# 8. Determine new sector count and update live kernel partition table via BLKPG_RESIZE_PARTITION
-END_SECTOR=$(/system/bin/sgdisk --info="$PART" "$DISK" 2>/dev/null | grep -i "Last sector" | awk '{print $3}')
-log "New GPT partition $PART end sector: $END_SECTOR"
-
-if [ -n "$END_SECTOR" ] && [ "$END_SECTOR" -gt "$START_SECTOR" ]; then
-    NEW_SECTORS=$(( END_SECTOR - START_SECTOR + 1 ))
-    START_BYTES=$(( START_SECTOR * 512 ))
-    LENGTH_BYTES=$(( NEW_SECTORS * 512 ))
-
-    if [ -x /vendor/bin/blkpg_resize ]; then
-        log "Calling /vendor/bin/blkpg_resize $DISK $PART $START_BYTES $LENGTH_BYTES..."
-        /vendor/bin/blkpg_resize "$DISK" "$PART" "$START_BYTES" "$LENGTH_BYTES"
+    # 7. Recreate userdata partition extending to the end of the disk
+    log "Recreating partition $PART: start=$START_SECTOR, end=0..."
+    if [ -n "$PARTUUID" ]; then
+        /system/bin/sgdisk --delete="$PART" --new="${PART}:${START_SECTOR}:0" --partition-guid="${PART}:${PARTUUID}" --change-name="${PART}:userdata" "$DISK"
     else
-        log "ERROR: /vendor/bin/blkpg_resize not found or not executable!"
+        /system/bin/sgdisk --delete="$PART" --new="${PART}:${START_SECTOR}:0" --change-name="${PART}:userdata" "$DISK"
     fi
+    log "sgdisk recreate status: $?"
+
+    # 8. Determine new sector count and update live kernel partition table via BLKPG_RESIZE_PARTITION
+    END_SECTOR=$(/system/bin/sgdisk --info="$PART" "$DISK" 2>/dev/null | grep -i "Last sector" | awk '{print $3}')
+    log "New GPT partition $PART end sector: $END_SECTOR"
+
+    if [ -n "$END_SECTOR" ] && [ "$END_SECTOR" -gt "$START_SECTOR" ]; then
+        NEW_SECTORS=$(( END_SECTOR - START_SECTOR + 1 ))
+        START_BYTES=$(( START_SECTOR * 512 ))
+        LENGTH_BYTES=$(( NEW_SECTORS * 512 ))
+
+        if [ -x /vendor/bin/blkpg_resize ]; then
+            log "Calling /vendor/bin/blkpg_resize $DISK $PART $START_BYTES $LENGTH_BYTES..."
+            /vendor/bin/blkpg_resize "$DISK" "$PART" "$START_BYTES" "$LENGTH_BYTES"
+            log "blkpg_resize status: $?"
+        else
+            log "ERROR: /vendor/bin/blkpg_resize not found or not executable!"
+        fi
+    fi
+    log "Kernel now sees $(cat "/sys/class/block/${DEV_BASE}/size" 2>/dev/null) sectors for $DEV_BASE"
 fi
 
 # 9. Resize F2FS filesystem offline while unmounted
@@ -161,9 +185,12 @@ sleep 0.5
 log "Resizing F2FS filesystem on $USERDATA_DEV..."
 if [ -x /system/bin/resize.f2fs ]; then
     /system/bin/resize.f2fs -f -F "$USERDATA_DEV"
+    log "resize.f2fs status: $?"
 elif [ -x /system/bin/resize2fs ]; then
     /system/bin/resize2fs -f "$USERDATA_DEV"
+    log "resize2fs status: $?"
 fi
+log "F2FS size after resize: $(f2fs_sectors) sectors"
 
 # 10. Remount /data if it was mounted before expansion
 if [ "$WAS_MOUNTED" -eq 1 ]; then

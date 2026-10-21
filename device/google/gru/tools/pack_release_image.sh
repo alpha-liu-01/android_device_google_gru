@@ -29,8 +29,9 @@ SIMG2IMG="${SIMG2IMG:-$HOST_BIN/simg2img}"
 MKE2FS="${MKE2FS:-$HOST_BIN/mke2fs}"
 MAKE_F2FS="${MAKE_F2FS:-$HOST_BIN/make_f2fs}"
 FSCK_F2FS="${FSCK_F2FS:-$HOST_BIN/fsck.f2fs}"
+FSCK_EROFS="${FSCK_EROFS:-$HOST_BIN/fsck.erofs}"
 
-for tool in "$SGDISK" "$SIMG2IMG" "$MKE2FS" "$MAKE_F2FS"; do
+for tool in "$SGDISK" "$SIMG2IMG" "$MKE2FS" "$MAKE_F2FS" "$FSCK_EROFS"; do
     if [ ! -x "$tool" ]; then
         echo "ERROR: Required host tool not found or not executable: $tool" >&2
         exit 1
@@ -43,12 +44,31 @@ if [ ! -f "$SUPER_SPARSE" ]; then
     exit 1
 fi
 
-KPART_IMG="$PRODUCT_OUT/vmlinuz.kpart"
-echo "=== [1/6] Building signed Depthcharge FIT kernel image (vmlinuz.kpart) ==="
-"$TOOLS_DIR/pack_kpart.sh" "$KPART_IMG"
+VENDOR_IMG="$PRODUCT_OUT/vendor.img"
+if [ ! -f "$VENDOR_IMG" ] || [ "$VENDOR_IMG" -nt "$SUPER_SPARSE" ]; then
+    echo "ERROR: $SUPER_SPARSE is missing or older than $VENDOR_IMG. Run 'm superimage' again." >&2
+    exit 1
+fi
 
 WORKDIR="$(mktemp -d "$OUTPUT_DIR/gru-release-work.XXXXXX")"
 trap 'rm -rf "$WORKDIR"' EXIT
+
+# SurfaceFlinger aborts ("gralloc-mapper is missing") without these, and the
+# device never reaches the boot animation. trunk_staging builds drop them.
+echo "=== [0/6] Checking vendor.img for the minigbm mapper ==="
+VENDOR_DIR="$WORKDIR/vendor"
+"$FSCK_EROFS" -d0 --extract="$VENDOR_DIR" "$VENDOR_IMG"
+for f in lib64/hw/mapper.minigbm_upstream.so etc/vintf/manifest/mapper.minigbm_upstream.xml; do
+    if [ ! -f "$VENDOR_DIR/$f" ]; then
+        echo "ERROR: vendor.img lacks /vendor/$f. Rebuild with 'breakfast gru' (TARGET_RELEASE=bp4a)." >&2
+        exit 1
+    fi
+done
+rm -rf "$VENDOR_DIR"
+
+KPART_IMG="$PRODUCT_OUT/vmlinuz.kpart"
+echo "=== [1/6] Building signed Depthcharge FIT kernel image (vmlinuz.kpart) ==="
+"$TOOLS_DIR/pack_kpart.sh" "$KPART_IMG"
 
 echo "=== [2/6] Unsparsing super.img and formatting partition images ==="
 SUPER_RAW="$WORKDIR/super.raw.img"

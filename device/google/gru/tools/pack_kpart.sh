@@ -61,6 +61,14 @@ for dtb in "${DTBS[@]}"; do
     fi
 done
 
+# A libcomposite.ko that creates /sys/class/android_usb makes system_server
+# wait forever for the (never started) USB gadget HAL; the UI never draws.
+if grep -q -a android_usb "$PREBUILT_DIR"/*.ko; then
+    echo "ERROR: $(grep -l -a android_usb "$PREBUILT_DIR"/*.ko | tr '\n' ' ')contain android_usb." >&2
+    echo "       Restore the original modules from the kernel modules_install tree." >&2
+    exit 1
+fi
+
 WORKDIR="$(mktemp -d /tmp/gru-kpart.XXXXXX)"
 trap 'rm -rf "$WORKDIR"' EXIT
 

@@ -26,7 +26,12 @@ mkdir -p /mnt/gru-bootlog
 if mountpoint -q /mnt/gru-bootlog; then
     umount /mnt/gru-bootlog
 fi
-mount -o ro /dev/mmcblk0p3 /mnt/gru-bootlog
+BOOTLOG_DEV=$(blkid -t PARTLABEL=bootlog -o device 2>/dev/null | head -n 1 || true)
+if [ -z "$BOOTLOG_DEV" ]; then
+    BOOTLOG_DEV=/dev/mmcblk0p2
+fi
+say "=== bootlog ($BOOTLOG_DEV) ==="
+mount -o ro "$BOOTLOG_DEV" /mnt/gru-bootlog
 say "=== files ==="
 ls -la /mnt/gru-bootlog | tee -a "$OUT"
 if [ -f /mnt/gru-bootlog/gru-phase3.log ]; then
@@ -37,5 +42,19 @@ else
     say LOG_MISSING
 fi
 umount /mnt/gru-bootlog
+
+META_DEV=$(blkid -t PARTLABEL=metadata -o device 2>/dev/null | head -n 1 || true)
+if [ -n "$META_DEV" ]; then
+    say "=== metadata ($META_DEV) ==="
+    mount -o ro "$META_DEV" /mnt/gru-bootlog 2>/dev/null || true
+    if mountpoint -q /mnt/gru-bootlog; then
+        ls -la /mnt/gru-bootlog | tee -a "$OUT"
+        if [ -f /mnt/gru-bootlog/expand_userdata.log ]; then
+            say "=== expand_userdata.log ==="
+            cat /mnt/gru-bootlog/expand_userdata.log | tee -a "$OUT"
+        fi
+        umount /mnt/gru-bootlog
+    fi
+fi
 chmod 644 "$OUT"
 say READ_OK

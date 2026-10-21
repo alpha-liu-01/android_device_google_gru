@@ -23,7 +23,7 @@ index 1a5f7f3..8666191 100644
      return device;
  }
 diff --git a/audio/aidl/default/alsa/StreamAlsa.cpp b/audio/aidl/default/alsa/StreamAlsa.cpp
-index 7a44cc7..eb67f46 100644
+index 7a44cc7..607ea69 100644
 --- a/audio/aidl/default/alsa/StreamAlsa.cpp
 +++ b/audio/aidl/default/alsa/StreamAlsa.cpp
 @@ -128,16 +128,18 @@ StreamAlsa::~StreamAlsa() {
@@ -40,7 +40,7 @@ index 7a44cc7..eb67f46 100644
 -            sources.push_back(source);
 -        } else {
 -            return ::android::NO_INIT;
-+        if (!device.isExternal) {
++        if (!device.isExternal && !mIsInput) {
 +            auto sink = makeSink(mIsInput);  // Do not block the writer when it is on our thread.
 +            if (sink != nullptr) {
 +                sinks.push_back(sink);
@@ -156,10 +156,22 @@ index 77e4f65..0701a06 100644
  }
  
 diff --git a/audio/aidl/default/primary/StreamPrimary.cpp b/audio/aidl/default/primary/StreamPrimary.cpp
-index 8455680..e4a9951 100644
+index 8455680..ab11bde 100644
 --- a/audio/aidl/default/primary/StreamPrimary.cpp
 +++ b/audio/aidl/default/primary/StreamPrimary.cpp
-@@ -147,12 +147,35 @@ ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& de
+@@ -98,6 +98,11 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
+     }
+     // This is a workaround for the emulator implementation which has a host-side buffer
+     // and is not being able to achieve real-time behavior similar to ADSPs (b/302587331).
++    // For input streams, StreamAlsa::transfer() directly calls blocking proxy_read_with_retries()
++    // which is already hardware-clocked by ALSA DMA, so do not skip transfers or sleep again.
++    if (mIsInput) {
++        return StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs);
++    }
+     if (!mSkipNextTransfer) {
+         RETURN_STATUS_IF_ERROR(
+                 StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs));
+@@ -147,12 +152,35 @@ ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& de
                     << devices.size();
          return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
      }
@@ -195,7 +207,7 @@ index 8455680..e4a9951 100644
          auto streamDataProcessor = getContext().getStreamDataProcessor().lock();
          if (streamDataProcessor != nullptr) {
              streamDataProcessor->setAudioDevice(devices[0]);
-@@ -182,14 +205,22 @@ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
+@@ -182,14 +210,22 @@ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
      std::string deviceAddress = devices[0].address.get<AudioDeviceAddress::id>();
      AlsaDeviceId cardAndDeviceId;
      if (const size_t suffixPos = deviceAddress.rfind("CARD_");

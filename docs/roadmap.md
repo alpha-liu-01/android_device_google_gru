@@ -251,8 +251,8 @@ RuntimeWatchdogSec=30
      - 硬件层与热插拔路由：本机 3.5mm 母座存在物理磨损，实测未插耳机时机械弹片稳定保持断开（`Headphones Jack: Off`，不会误触发耳机模式抢占扬声器）；插入插头时若接触到位，`DA7219` 硬件阻抗检测能正常上报 `SW_HEADPHONE_INSERT=1` 给 Android `WiredAccessoryManager`。
      - **AIDL Audio HAL 模拟耳机路由修复**：当 `WiredAccessoryManager` 通知连接有线耳机/耳麦（`CONNECTION_ANALOG`）时，`Hal2AidlMapper` 会清空地址去匹配 XML 模板。我们在 `StreamPrimary::getCardAndDeviceId()` 中增加了对 `AudioDeviceDescription::CONNECTION_ANALOG` 的映射（自动路由至 `card 0, device 2` 即 `DA7219`），并在 `StreamPrimary::setConnectedDevices()` 中根据当前连接设备是内置设备还是 `CONNECTION_ANALOG` 自动切换 ALSA Mixer 的 `Speakers Switch` / `Headphones Switch` 与 `Int Mic Switch` / `Headset Mic Switch`（同时始终固定 `Out DAIL/R Mux = ADC` 防止 `I2S0` 总线冲突）。
    - **修复与实机验证结果**：
-     - 已将 `XsdcConversion.cpp`（保留 XML 显式声明的 `address`）与 `StreamPrimary.cpp`（`CONNECTION_ANALOG -> device 2` + ALSA Mixer 自动路由切换）合入 `patches/hardware_interfaces_audio_usb_alsa_sync_io.patch`，更新 `device/google/gru/etc/audio_policy_configuration.xml` 与 `device/google/gru/init.gru.rc`。
-     - 实机验证：LineageOS 系统录音机（`org.lineageos.recorder`）使用内置 DMIC 麦克风录音计时、波形显示、保存与回放全部正常；`Aperture` 相机前后摄像头有声录像计时正常推进，录制的 MP4 文件（`1280x720@30fps` H.264 视频流 + `44.1 kHz` AAC 音轨，实测环境音电平 `-26.3 dB`）画面与声音均清晰正常，已固化入最新 `super.img`（`3edf21df7fc3fa656fc9c0506abcd34f6caa0e0610254149228a4252560e0ce4`）。
+     - 已将 `XsdcConversion.cpp`（保留 XML 显式声明的 `address`）、`StreamPrimary.cpp`（`CONNECTION_ANALOG -> device 2` + ALSA Mixer 自动路由切换 + 输入流跳过模拟器 `mSkipNextTransfer` 抽帧与软件 `usleep`）与 `StreamAlsa.cpp`（所有输入流 `!mIsInput` 旁路非阻塞 `MonoPipeReader`，直接调用 `proxy_read_with_retries` 同步阻塞读取 ALSA DMA，彻底消除 `incomplete data received, inserting 4096 frames of silence` 导致的断续与杂音）合入 `patches/hardware_interfaces_audio_usb_alsa_sync_io.patch`，更新 `device/google/gru/etc/audio_policy_configuration.xml` 与 `device/google/gru/init.gru.rc`。
+     - 实机验证：LineageOS 系统录音机（`org.lineageos.recorder`）使用内置 DMIC 麦克风录音计时、波形显示、保存与回放全部正常且 `incomplete data received` 丢帧清零；`Aperture` 相机前后摄像头有声录像计时正常推进，录制的 MP4 文件（`1280x720@30fps` H.264 视频流 + `44.1 kHz` AAC 音轨，实测环境音电平 `-26.3 dB`）画面与声音均清晰正常。
 
 ### 5 可分发的 SD 镜像
 

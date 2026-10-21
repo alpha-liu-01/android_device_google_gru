@@ -432,3 +432,4 @@
 | 2026-10-20 | 完成第二步（修复连接 PC 拔线后充电状态常驻卡死与「正在无线充电」乌龙状态：引入 `EC_CMD_USB_PD_CONTROL` 物理连接位判据、`100ms × 5` `poll_work` 延迟复核、`last_psy_online` uevent 通知与 `BatteryMonitor` 无充电器在线时的状态修正）。 |
 | 2026-10-20 | 实机验证确认第三步全功能 USB-C（Gadget 模式）与 OTG Host 无法共存，回退并清理第三步改动（保持 `dr_mode = "host"` 与 `TARGET_USB_INIT_SCRIPT := none`），将第一步与第二步全部改动重新编译固化为 `super.img`（`1eb8fa3b981714612f166b131063d2306c5610c0ba5d6dc78336d13d7a67ab1e`）与 `rk3399-gru-scarlet-kd.dtb`（`d36a32cb...`），准备从内置盘 postmarketOS 刷写。 |
 | 2026-10-20 | 完成第四步：实机验证便携屏外接电源后 DP Alt Mode 横竖屏稳定不掉线；分析外接 16:9 屏幕在 4:3 镜像模式下的等比黑边机制并配置 Android 16 扩展桌面支持；修复 `drm_hwcomposer` 在 VOP `win2` 无缩放器图层上的 `ret=-34 (-ERANGE)` 刷屏报错并热加载至实机。 |
+| 2026-10-20 | 将外接显示扩展模式配置（`override_desktop_experience_features 1`、`config_isDesktopModeSupported`、`vendor.hwc.drm.internal_display_names=DSI-1,eDP-1`）与 `DrmPlane.cpp` 缩放判据修复重编固化入 `super.img`（`282b8f271a7039768dec97f5006802b360491ecd00f40b9e68ad135accd10d7f`），刷机后实机验证镜像模式与扩展桌面模式均完全正常。 |

@@ -81,6 +81,16 @@ on early-init
     insmod /vendor/lib/snd-soc-hdmi-codec.ko
     insmod /vendor/lib/snd-soc-rk3399-gru-sound.ko
     insmod /vendor/lib/mc.ko
+    insmod /vendor/lib/videodev.ko
+    insmod /vendor/lib/videobuf2-common.ko
+    insmod /vendor/lib/videobuf2-memops.ko
+    insmod /vendor/lib/videobuf2-dma-contig.ko
+    insmod /vendor/lib/videobuf2-v4l2.ko
+    insmod /vendor/lib/v4l2-mem2mem.ko
+    insmod /vendor/lib/v4l2-h264.ko
+    insmod /vendor/lib/v4l2-vp9.ko
+    insmod /vendor/lib/hantro-vpu.ko
+    insmod /vendor/lib/rockchip-vdec.ko
     insmod /vendor/lib/snd-hwdep.ko
     insmod /vendor/lib/snd-seq-device.ko
     insmod /vendor/lib/snd-rawmidi.ko

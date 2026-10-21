@@ -191,6 +191,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/fuse.ko:$(TARGET_COPY_OUT_VENDOR)/lib/fuse.ko \
     $(LOCAL_PATH)/modules/gpio_keys.ko:$(TARGET_COPY_OUT_VENDOR)/lib/gpio_keys.ko \
     $(LOCAL_PATH)/modules/gpu-sched.ko:$(TARGET_COPY_OUT_VENDOR)/lib/gpu-sched.ko \
+    $(LOCAL_PATH)/modules/hantro-vpu.ko:$(TARGET_COPY_OUT_VENDOR)/lib/hantro-vpu.ko \
     $(LOCAL_PATH)/modules/hidp.ko:$(TARGET_COPY_OUT_VENDOR)/lib/hidp.ko \
     $(LOCAL_PATH)/modules/i2c-hid-of.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid-of.ko \
     $(LOCAL_PATH)/modules/i2c-hid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/i2c-hid.ko \
@@ -207,6 +208,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/rfkill.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rfkill.ko \
     $(LOCAL_PATH)/modules/rk3399_dmc.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rk3399_dmc.ko \
     $(LOCAL_PATH)/modules/rockchip-dfi.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-dfi.ko \
+    $(LOCAL_PATH)/modules/rockchip-vdec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-vdec.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \
     $(LOCAL_PATH)/modules/rtc-cros-ec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rtc-cros-ec.ko \
     $(LOCAL_PATH)/modules/snd-hwdep.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-hwdep.ko \
@@ -233,6 +235,14 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/tcp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/tcp_diag.ko \
     $(LOCAL_PATH)/modules/udp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/udp_diag.ko \
     $(LOCAL_PATH)/modules/uhid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uhid.ko \
+    $(LOCAL_PATH)/modules/v4l2-h264.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-h264.ko \
+    $(LOCAL_PATH)/modules/v4l2-mem2mem.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-mem2mem.ko \
+    $(LOCAL_PATH)/modules/v4l2-vp9.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-vp9.ko \
+    $(LOCAL_PATH)/modules/videobuf2-common.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-common.ko \
+    $(LOCAL_PATH)/modules/videobuf2-dma-contig.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-dma-contig.ko \
+    $(LOCAL_PATH)/modules/videobuf2-memops.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-memops.ko \
+    $(LOCAL_PATH)/modules/videobuf2-v4l2.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videobuf2-v4l2.ko \
+    $(LOCAL_PATH)/modules/videodev.ko:$(TARGET_COPY_OUT_VENDOR)/lib/videodev.ko \
     $(LOCAL_PATH)/modules/zram.ko:$(TARGET_COPY_OUT_VENDOR)/lib/zram.ko
 
 include $(LOCAL_PATH)/modules.mk

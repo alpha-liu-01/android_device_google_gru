@@ -1,0 +1,1260 @@
+diff --git a/Android.bp b/Android.bp
+index a2f60d1..6134306 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -103,6 +103,28 @@ rust_library {
+     },
+ }
+ 
++// C interface to the V4L2 stateless decoders, used by the v4l2_codec2 Codec2 HAL.
++rust_ffi_shared {
++    name: "libcros_codecs_ffi",
++    crate_name: "cros_codecs_ffi",
++    srcs: ["ffi/src/lib.rs"],
++    edition: "2021",
++    include_dirs: ["ffi/include"],
++    rustlibs: [
++        "libandroid_logger",
++        "libcros_codecs",
++        "liblog_rust",
++    ],
++    vendor: true,
++    prefer_rlib: true,
++    enabled: false,
++    arch: {
++        arm64: {
++            enabled: true,
++        },
++    },
++}
++
+ rust_library {
+     name: "libcros_codecs_test_common",
+     srcs: ["tests/lib.rs"],
+diff --git a/examples/ccdec/main.rs b/examples/ccdec/main.rs
+index 076ddd9..047c05a 100644
+--- a/examples/ccdec/main.rs
++++ b/examples/ccdec/main.rs
+@@ -114,7 +114,12 @@ fn main() {
+     let stream_mode = Some(Md5Computation::Stream) == args.compute_md5;
+ 
+     let gbm_device = Arc::new(
+-        GbmDevice::open(PathBuf::from("/dev/dri/renderD128")).expect("Could not open GBM device!"),
++        match &args.gbm_device {
++            Some(path) => GbmDevice::open(path.clone()),
++            None => GbmDevice::open(PathBuf::from("/dev/dri/card0"))
++                .or_else(|_| GbmDevice::open(PathBuf::from("/dev/dri/renderD128"))),
++        }
++        .expect("Could not open GBM device!"),
+     );
+     let framepool = Arc::new(Mutex::new(FramePool::new(move |stream_info: &StreamInfo| {
+         let mut ret = <Arc<GbmDevice> as Clone>::clone(&gbm_device)
+diff --git a/ffi/include/cros_codecs_ffi.h b/ffi/include/cros_codecs_ffi.h
+new file mode 100644
+index 0000000..f9a19f8
+--- /dev/null
++++ b/ffi/include/cros_codecs_ffi.h
+@@ -0,0 +1,105 @@
++// Copyright 2026 The LineageOS Project
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// C interface to the cros-codecs V4L2 stateless decoders.
++//
++// A decoder instance is not thread-safe: all calls on one instance, including the destroy call,
++// must be made from the same thread. The frame callbacks are invoked synchronously on that thread
++// from inside the decode, next_event, flush and destroy calls.
++
++#ifndef CROS_CODECS_FFI_H
++#define CROS_CODECS_FFI_H
++
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef struct CrosCodecsDecoder CrosCodecsDecoder;
++
++enum CcCodec {
++    CC_CODEC_H264 = 0,
++    CC_CODEC_VP8 = 1,
++    CC_CODEC_VP9 = 2,
++};
++
++enum CcStatus {
++    CC_STATUS_OK = 0,
++    // The alloc callback returned false. Retry the same call once more frames are available.
++    CC_STATUS_NEED_FRAMES = 1,
++    // Events must be drained with cros_codecs_decoder_next_event() before retrying the same call.
++    CC_STATUS_CHECK_EVENTS = 2,
++    // All V4L2 CAPTURE slots are held by the decoder.
++    CC_STATUS_OUT_OF_SLOTS = 3,
++    CC_STATUS_ERROR = -1,
++};
++
++enum CcEventType {
++    CC_EVENT_FRAME = 1,
++    CC_EVENT_FORMAT_CHANGED = 2,
++    CC_EVENT_CSD = 3,
++};
++
++#define CC_MAX_PLANES 4
++
++// Describes an output buffer handed to the decoder. All planes live in the single |fd|.
++typedef struct {
++    uint64_t token;
++    // The decoder takes ownership of |fd| and closes it once the frame is released.
++    int32_t fd;
++    uint32_t fourcc;
++    uint32_t width;
++    uint32_t height;
++    uint32_t num_planes;
++    uint64_t offsets[CC_MAX_PLANES];
++    uint64_t strides[CC_MAX_PLANES];
++} CcFrameDesc;
++
++typedef struct {
++    uint32_t type;
++    // Value passed to cros_codecs_decoder_decode() for the input that produced this event.
++    uint64_t timestamp;
++    // CC_EVENT_FRAME: token of the decoded frame.
++    uint64_t token;
++    // CC_EVENT_FRAME and CC_EVENT_FORMAT_CHANGED: visible rectangle, as left/top/right/bottom.
++    uint32_t visible_left;
++    uint32_t visible_top;
++    uint32_t visible_right;
++    uint32_t visible_bottom;
++    // CC_EVENT_FORMAT_CHANGED only.
++    uint32_t coded_width;
++    uint32_t coded_height;
++    uint32_t min_num_frames;
++    uint32_t fourcc;
++} CcEvent;
++
++// Fills |desc| with a free output buffer and returns true, or returns false if none is available.
++typedef bool (*CcAllocFrameCb)(void* ctx, CcFrameDesc* desc);
++// Called once the decoder holds no more references to the frame identified by |token|.
++typedef void (*CcReleaseFrameCb)(void* ctx, uint64_t token);
++
++CrosCodecsDecoder* cros_codecs_decoder_create(uint32_t codec, void* ctx, CcAllocFrameCb alloc_cb,
++                                              CcReleaseFrameCb release_cb);
++void cros_codecs_decoder_destroy(CrosCodecsDecoder* decoder);
++
++// Decodes from |data + offset|. On CC_STATUS_OK, |*consumed| is the number of bytes processed and
++// the call must be repeated with |offset + *consumed| until the whole buffer is consumed.
++int32_t cros_codecs_decoder_decode(CrosCodecsDecoder* decoder, uint64_t timestamp,
++                                   const uint8_t* data, size_t size, size_t offset,
++                                   bool codec_specific_data, size_t* consumed);
++
++// Outputs all pending frames. Decoding resumes at the next key frame.
++int32_t cros_codecs_decoder_flush(CrosCodecsDecoder* decoder);
++
++// Returns true and fills |event| if an event is pending.
++bool cros_codecs_decoder_next_event(CrosCodecsDecoder* decoder, CcEvent* event);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif  // CROS_CODECS_FFI_H
+diff --git a/ffi/src/lib.rs b/ffi/src/lib.rs
+new file mode 100644
+index 0000000..19daff3
+--- /dev/null
++++ b/ffi/src/lib.rs
+@@ -0,0 +1,372 @@
++// Copyright 2026 The LineageOS Project
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++//! C interface to the cros-codecs V4L2 stateless decoders. See `include/cros_codecs_ffi.h`.
++
++use std::cell::Cell;
++use std::ffi::c_void;
++use std::fmt;
++use std::fs::File;
++use std::os::fd::FromRawFd;
++use std::panic::catch_unwind;
++use std::panic::AssertUnwindSafe;
++use std::sync::Arc;
++
++use cros_codecs::backend::v4l2::decoder::stateless::V4l2StatelessDecoderBackend;
++use cros_codecs::decoder::stateless::h264::H264;
++use cros_codecs::decoder::stateless::vp8::Vp8;
++use cros_codecs::decoder::stateless::vp9::Vp9;
++use cros_codecs::decoder::stateless::DecodeError;
++use cros_codecs::decoder::stateless::DynStatelessVideoDecoder;
++use cros_codecs::decoder::stateless::StatelessDecoder;
++use cros_codecs::decoder::stateless::StatelessVideoDecoder;
++use cros_codecs::decoder::BlockingMode;
++use cros_codecs::decoder::DecodedHandle;
++use cros_codecs::decoder::DecoderEvent;
++use cros_codecs::decoder::DynDecodedHandle;
++use cros_codecs::decoder::ReadyFrame;
++use cros_codecs::video_frame::generic_dma_video_frame::GenericDmaVideoFrame;
++use cros_codecs::Fourcc;
++use cros_codecs::FrameLayout;
++use cros_codecs::PlaneLayout;
++use cros_codecs::Rect;
++use cros_codecs::Resolution;
++
++const CC_CODEC_H264: u32 = 0;
++const CC_CODEC_VP8: u32 = 1;
++const CC_CODEC_VP9: u32 = 2;
++
++const CC_STATUS_OK: i32 = 0;
++const CC_STATUS_NEED_FRAMES: i32 = 1;
++const CC_STATUS_CHECK_EVENTS: i32 = 2;
++const CC_STATUS_OUT_OF_SLOTS: i32 = 3;
++const CC_STATUS_ERROR: i32 = -1;
++
++const CC_EVENT_FRAME: u32 = 1;
++const CC_EVENT_FORMAT_CHANGED: u32 = 2;
++const CC_EVENT_CSD: u32 = 3;
++
++const CC_MAX_PLANES: usize = 4;
++
++/// Output buffer description, mirrors `CcFrameDesc` in `cros_codecs_ffi.h`.
++#[repr(C)]
++#[derive(Default)]
++pub struct CcFrameDesc {
++    token: u64,
++    fd: i32,
++    fourcc: u32,
++    width: u32,
++    height: u32,
++    num_planes: u32,
++    offsets: [u64; CC_MAX_PLANES],
++    strides: [u64; CC_MAX_PLANES],
++}
++
++/// Decoder event, mirrors `CcEvent` in `cros_codecs_ffi.h`.
++#[repr(C)]
++#[derive(Default)]
++pub struct CcEvent {
++    type_: u32,
++    timestamp: u64,
++    token: u64,
++    visible_left: u32,
++    visible_top: u32,
++    visible_right: u32,
++    visible_bottom: u32,
++    coded_width: u32,
++    coded_height: u32,
++    min_num_frames: u32,
++    fourcc: u32,
++}
++
++/// Fills the descriptor with a free output buffer, or returns false if none is available.
++pub type CcAllocFrameCb = extern "C" fn(ctx: *mut c_void, desc: *mut CcFrameDesc) -> bool;
++/// Notifies the client that the decoder no longer references a buffer.
++pub type CcReleaseFrameCb = extern "C" fn(ctx: *mut c_void, token: u64);
++
++struct TokenInner {
++    id: u64,
++    ctx: usize,
++    release_cb: CcReleaseFrameCb,
++}
++
++impl Drop for TokenInner {
++    fn drop(&mut self) {
++        (self.release_cb)(self.ctx as *mut c_void, self.id);
++    }
++}
++
++/// Identifies a client buffer. The client is notified when the last clone is dropped.
++#[derive(Clone)]
++pub struct FrameToken(Arc<TokenInner>);
++
++impl fmt::Debug for FrameToken {
++    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
++        write!(f, "FrameToken({})", self.0.id)
++    }
++}
++
++type Frame = GenericDmaVideoFrame<FrameToken>;
++type Backend = V4l2StatelessDecoderBackend<Frame>;
++
++/// Decoder instance behind the opaque `CrosCodecsDecoder` C type.
++pub struct CrosCodecsDecoder {
++    decoder: DynStatelessVideoDecoder<Frame>,
++    ctx: usize,
++    alloc_cb: CcAllocFrameCb,
++    release_cb: CcReleaseFrameCb,
++    // Handles returned by the last next_event() calls. The client must see the frame event before
++    // the decoder can release the frame, so they are only dropped on the next call.
++    emitted: Vec<DynDecodedHandle<Frame>>,
++}
++
++fn set_rect(event: &mut CcEvent, rect: Rect) {
++    // cros-codecs stores the bottom-right corner in `width` and `height`.
++    event.visible_left = rect.x;
++    event.visible_top = rect.y;
++    event.visible_right = rect.width;
++    event.visible_bottom = rect.height;
++}
++
++impl CrosCodecsDecoder {
++    fn new(
++        codec: u32,
++        ctx: usize,
++        alloc_cb: CcAllocFrameCb,
++        release_cb: CcReleaseFrameCb,
++    ) -> Result<Self, String> {
++        let mode = BlockingMode::Blocking;
++        let decoder: DynStatelessVideoDecoder<Frame> = match codec {
++            CC_CODEC_H264 => StatelessDecoder::<H264, Backend>::new_v4l2(mode)
++                .map_err(|e| e.to_string())?
++                .into_trait_object(),
++            CC_CODEC_VP8 => StatelessDecoder::<Vp8, Backend>::new_v4l2(mode)
++                .map_err(|e| e.to_string())?
++                .into_trait_object(),
++            CC_CODEC_VP9 => StatelessDecoder::<Vp9, Backend>::new_v4l2(mode)
++                .map_err(|e| e.to_string())?
++                .into_trait_object(),
++            _ => return Err(format!("unsupported codec {codec}")),
++        };
++        Ok(Self { decoder, ctx, alloc_cb, release_cb, emitted: Vec::new() })
++    }
++
++    fn decode(
++        &mut self,
++        timestamp: u64,
++        bitstream: &[u8],
++        offset: usize,
++        codec_specific_data: bool,
++        consumed: &mut usize,
++    ) -> i32 {
++        self.emitted.clear();
++
++        let ctx = self.ctx;
++        let alloc_cb = self.alloc_cb;
++        let release_cb = self.release_cb;
++        let starved = Cell::new(false);
++        let invalid_frame = Cell::new(false);
++        let mut alloc = || -> Option<Frame> {
++            let mut desc = CcFrameDesc { fd: -1, ..Default::default() };
++            if !alloc_cb(ctx as *mut c_void, &mut desc) {
++                starved.set(true);
++                return None;
++            }
++            // SAFETY: the client transfers ownership of a valid dma-buf fd.
++            let file = unsafe { File::from_raw_fd(desc.fd) };
++            let token = FrameToken(Arc::new(TokenInner { id: desc.token, ctx, release_cb }));
++            let num_planes = (desc.num_planes as usize).min(CC_MAX_PLANES);
++            let layout = FrameLayout {
++                format: (Fourcc::from(desc.fourcc), 0),
++                size: Resolution { width: desc.width, height: desc.height },
++                planes: (0..num_planes)
++                    .map(|i| PlaneLayout {
++                        buffer_index: 0,
++                        offset: desc.offsets[i] as usize,
++                        stride: desc.strides[i] as usize,
++                    })
++                    .collect(),
++            };
++            let rect = Rect { x: 0, y: 0, width: desc.width, height: desc.height };
++            match GenericDmaVideoFrame::new(token, vec![file], layout, rect) {
++                Ok(frame) => Some(frame),
++                Err(e) => {
++                    log::error!("Invalid output buffer {}: {}", desc.token, e);
++                    invalid_frame.set(true);
++                    None
++                }
++            }
++        };
++
++        let result = self.decoder.decode(
++            timestamp,
++            bitstream,
++            offset,
++            codec_specific_data,
++            &None,
++            &Vec::new(),
++            &mut alloc,
++        );
++        match result {
++            Ok((bytes, _)) => {
++                *consumed = bytes;
++                CC_STATUS_OK
++            }
++            Err(_) if invalid_frame.get() => CC_STATUS_ERROR,
++            Err(DecodeError::NotEnoughOutputBuffers(_)) if starved.get() => CC_STATUS_NEED_FRAMES,
++            Err(DecodeError::NotEnoughOutputBuffers(_)) => CC_STATUS_OUT_OF_SLOTS,
++            Err(DecodeError::CheckEvents) => CC_STATUS_CHECK_EVENTS,
++            Err(e) => {
++                log::error!("Decode error: {e:?}");
++                CC_STATUS_ERROR
++            }
++        }
++    }
++
++    fn flush(&mut self) -> i32 {
++        self.emitted.clear();
++        match self.decoder.flush() {
++            Ok(()) => CC_STATUS_OK,
++            Err(e) => {
++                log::error!("Flush error: {e:?}");
++                CC_STATUS_ERROR
++            }
++        }
++    }
++
++    fn next_event(&mut self, event: &mut CcEvent) -> bool {
++        *event = CcEvent::default();
++        match self.decoder.next_event() {
++            Some(DecoderEvent::FrameReady(ReadyFrame::Frame(handle))) => {
++                if let Err(e) = handle.sync() {
++                    log::error!("Failed to sync decoded frame: {e:?}");
++                }
++                event.type_ = CC_EVENT_FRAME;
++                // V4L2 backends store `timestamp << 1` and use the LSB to tell apart the frames
++                // of a VP9 superframe.
++                event.timestamp = handle.timestamp() >> 1;
++                event.token = handle.video_frame().token.0.id;
++                set_rect(event, handle.display_rect());
++                self.emitted.push(handle);
++                true
++            }
++            Some(DecoderEvent::FrameReady(ReadyFrame::CSD(timestamp))) => {
++                event.type_ = CC_EVENT_CSD;
++                event.timestamp = timestamp;
++                true
++            }
++            Some(DecoderEvent::FormatChanged) => {
++                event.type_ = CC_EVENT_FORMAT_CHANGED;
++                if let Some(info) = self.decoder.stream_info() {
++                    event.coded_width = info.coded_resolution.width;
++                    event.coded_height = info.coded_resolution.height;
++                    event.min_num_frames = info.min_num_frames as u32;
++                    event.fourcc = u32::from(Fourcc::from(info.format));
++                    set_rect(event, info.display_rect);
++                }
++                true
++            }
++            None => false,
++        }
++    }
++}
++
++fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
++    catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| {
++        log::error!("Panic in cros-codecs decoder");
++        default
++    })
++}
++
++/// # Safety
++///
++/// `ctx` must remain valid for as long as the callbacks can be invoked, i.e. until
++/// `cros_codecs_decoder_destroy()` returns.
++#[no_mangle]
++pub unsafe extern "C" fn cros_codecs_decoder_create(
++    codec: u32,
++    ctx: *mut c_void,
++    alloc_cb: CcAllocFrameCb,
++    release_cb: CcReleaseFrameCb,
++) -> *mut CrosCodecsDecoder {
++    android_logger::init_once(
++        android_logger::Config::default()
++            .with_max_level(log::LevelFilter::Info)
++            .with_tag("cros-codecs"),
++    );
++    guard(std::ptr::null_mut(), || {
++        match CrosCodecsDecoder::new(codec, ctx as usize, alloc_cb, release_cb) {
++            Ok(decoder) => Box::into_raw(Box::new(decoder)),
++            Err(e) => {
++                log::error!("Failed to create decoder: {e}");
++                std::ptr::null_mut()
++            }
++        }
++    })
++}
++
++/// # Safety
++///
++/// `decoder` must have been returned by `cros_codecs_decoder_create()` and not destroyed yet.
++#[no_mangle]
++pub unsafe extern "C" fn cros_codecs_decoder_destroy(decoder: *mut CrosCodecsDecoder) {
++    if !decoder.is_null() {
++        // SAFETY: the caller guarantees `decoder` came from `cros_codecs_decoder_create()`.
++        guard((), || drop(unsafe { Box::from_raw(decoder) }));
++    }
++}
++
++/// # Safety
++///
++/// `decoder` must be valid, `data` must point to `size` readable bytes and `consumed` must be
++/// writable.
++#[no_mangle]
++pub unsafe extern "C" fn cros_codecs_decoder_decode(
++    decoder: *mut CrosCodecsDecoder,
++    timestamp: u64,
++    data: *const u8,
++    size: usize,
++    offset: usize,
++    codec_specific_data: bool,
++    consumed: *mut usize,
++) -> i32 {
++    if decoder.is_null() || data.is_null() || consumed.is_null() || offset > size {
++        return CC_STATUS_ERROR;
++    }
++    // SAFETY: the caller guarantees the pointers are valid and `data` holds `size` bytes.
++    let (decoder, bitstream, consumed) =
++        unsafe { (&mut *decoder, std::slice::from_raw_parts(data, size), &mut *consumed) };
++    guard(CC_STATUS_ERROR, || {
++        decoder.decode(timestamp, bitstream, offset, codec_specific_data, consumed)
++    })
++}
++
++/// # Safety
++///
++/// `decoder` must be valid.
++#[no_mangle]
++pub unsafe extern "C" fn cros_codecs_decoder_flush(decoder: *mut CrosCodecsDecoder) -> i32 {
++    if decoder.is_null() {
++        return CC_STATUS_ERROR;
++    }
++    // SAFETY: the caller guarantees `decoder` is valid.
++    let decoder = unsafe { &mut *decoder };
++    guard(CC_STATUS_ERROR, || decoder.flush())
++}
++
++/// # Safety
++///
++/// `decoder` must be valid and `event` must be writable.
++#[no_mangle]
++pub unsafe extern "C" fn cros_codecs_decoder_next_event(
++    decoder: *mut CrosCodecsDecoder,
++    event: *mut CcEvent,
++) -> bool {
++    if decoder.is_null() || event.is_null() {
++        return false;
++    }
++    // SAFETY: the caller guarantees both pointers are valid.
++    let (decoder, event) = unsafe { (&mut *decoder, &mut *event) };
++    guard(false, || decoder.next_event(event))
++}
+diff --git a/src/backend/v4l2/decoder/stateless.rs b/src/backend/v4l2/decoder/stateless.rs
+index a810ce4..da3d9ed 100644
+--- a/src/backend/v4l2/decoder/stateless.rs
++++ b/src/backend/v4l2/decoder/stateless.rs
+@@ -76,10 +76,12 @@ pub struct V4l2StatelessDecoderHandle<V: VideoFrame> {
+ 
+ impl<V: VideoFrame> V4l2StatelessDecoderHandle<V> {
+     pub(crate) fn new_handle_from_same_buffer(&self, timestamp: u64) -> Self {
++        // Match the `timestamp << 1` encoding the codec backends use for V4L2 buffer timestamps,
++        // so that every handle reports its timestamp in the same domain.
+         Self {
+             picture: self.picture.clone(),
+             stream_info: self.stream_info.clone(),
+-            override_timestamp: Some(timestamp),
++            override_timestamp: Some(timestamp << 1),
+         }
+     }
+ }
+@@ -184,7 +186,14 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
+         self.stream_info.transfer = stream_params.transfer();
+         self.stream_info.matrix = stream_params.matrix();
+ 
+-        Ok(self.device.initialize_capture_queue(min_num_frames as u32)?)
++        let negotiated_coded_resolution =
++            self.device.initialize_capture_queue(min_num_frames as u32)?;
++        if negotiated_coded_resolution.width >= coded_resolution.width
++            && negotiated_coded_resolution.height >= coded_resolution.height
++        {
++            self.stream_info.coded_resolution = negotiated_coded_resolution;
++        }
++        Ok(())
+     }
+ }
+ 
+diff --git a/src/c2_wrapper/c2_decoder.rs b/src/c2_wrapper/c2_decoder.rs
+index 0e7f116..38a4892 100644
+--- a/src/c2_wrapper/c2_decoder.rs
++++ b/src/c2_wrapper/c2_decoder.rs
+@@ -384,8 +384,10 @@ where
+                                 }
+                             }
+ 
+-                            let (needs_linearization, needs_bit_depth_subsampling) =
++                            let (client_linear_modifier, needs_bit_depth_subsampling) =
+                                 (*self.framepool_hint_cb.lock().unwrap())(stream_info.clone());
++                            let needs_linearization = client_linear_modifier
++                                && self.decoder_modifier != DrmModifier::Linear.into();
+ 
+                             if !(self.needs_bit_depth_subsampling | self.needs_linearization)
+                                 && (needs_linearization | needs_bit_depth_subsampling)
+diff --git a/src/codec/vp8.rs b/src/codec/vp8.rs
+index c8db8ff..f482d13 100644
+--- a/src/codec/vp8.rs
++++ b/src/codec/vp8.rs
+@@ -6,6 +6,6 @@
+ #![warn(clippy::panic)]
+ #![warn(clippy::unwrap_used)]
+ 
+-mod bool_decoder;
++pub mod bool_decoder;
+ pub mod parser;
+ mod probs;
+diff --git a/src/codec/vp9/lookups.rs b/src/codec/vp9/lookups.rs
+index 4a189de..567322c 100644
+--- a/src/codec/vp9/lookups.rs
++++ b/src/codec/vp9/lookups.rs
+@@ -114,3 +114,20 @@ pub const AC_QLOOKUP_12: [i16; 256] = [
+     22334, 22766, 23214, 23662, 24126, 24590, 25070, 25551, 26047, 26559, 27071, 27599, 28143,
+     28687, 29247,
+ ];
++
++/// Inverse probability remapping table as per "6.3.5 Inv remap prob syntax" of the VP9 spec.
++pub const INV_MAP_TABLE: [u8; 255] = [
++    7, 20, 33, 46, 59, 72, 85, 98, 111, 124, 137, 150, 163, 176, 189, 202, 215, 228, 241, 254, 1,
++    2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25, 26, 27, 28,
++    29, 30, 31, 32, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 47, 48, 49, 50, 51, 52, 53, 54,
++    55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 73, 74, 75, 76, 77, 78, 79, 80,
++    81, 82, 83, 84, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 99, 100, 101, 102, 103, 104,
++    105, 106, 107, 108, 109, 110, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 125,
++    126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 138, 139, 140, 141, 142, 143, 144, 145,
++    146, 147, 148, 149, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 164, 165, 166,
++    167, 168, 169, 170, 171, 172, 173, 174, 175, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186,
++    187, 188, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 203, 204, 205, 206, 207,
++    208, 209, 210, 211, 212, 213, 214, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227,
++    229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 242, 243, 244, 245, 246, 247, 248,
++    249, 250, 251, 252, 253, 253,
++];
+diff --git a/src/codec/vp9/parser.rs b/src/codec/vp9/parser.rs
+index 48b068c..2b20887 100644
+--- a/src/codec/vp9/parser.rs
++++ b/src/codec/vp9/parser.rs
+@@ -3,14 +3,52 @@
+ // found in the LICENSE file.
+ 
+ use crate::bitstream_utils::BitReader;
++use crate::codec::vp8::bool_decoder::BoolDecoder;
+ use crate::codec::vp9::lookups::AC_QLOOKUP;
+ use crate::codec::vp9::lookups::AC_QLOOKUP_10;
+ use crate::codec::vp9::lookups::AC_QLOOKUP_12;
+ use crate::codec::vp9::lookups::DC_QLOOKUP;
+ use crate::codec::vp9::lookups::DC_QLOOKUP_10;
+ use crate::codec::vp9::lookups::DC_QLOOKUP_12;
++use crate::codec::vp9::lookups::INV_MAP_TABLE;
+ use crate::ColorRange;
+ 
++const DIFF_UPDATE_PROB: u8 = 252;
++const MV_UPDATE_PROB: u8 = 252;
++
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct Vp9MvProbs {
++    pub joint: [u8; 3],
++    pub sign: [u8; 2],
++    pub classes: [[u8; 10]; 2],
++    pub class0_bit: [u8; 2],
++    pub bits: [[u8; 10]; 2],
++    pub class0_fr: [[[u8; 3]; 2]; 2],
++    pub fr: [[u8; 3]; 2],
++    pub class0_hp: [u8; 2],
++    pub hp: [u8; 2],
++}
++
++#[derive(Clone, Debug, Default, PartialEq, Eq)]
++pub struct Vp9CompressedHeader {
++    pub tx_mode: u8,
++    pub tx8: [[u8; 1]; 2],
++    pub tx16: [[u8; 2]; 2],
++    pub tx32: [[u8; 3]; 2],
++    pub coef: [[[[[[u8; 3]; 6]; 6]; 2]; 2]; 4],
++    pub skip: [u8; 3],
++    pub inter_mode: [[u8; 3]; 7],
++    pub interp_filter: [[u8; 2]; 4],
++    pub is_inter: [u8; 4],
++    pub comp_mode: [u8; 5],
++    pub single_ref: [[u8; 2]; 5],
++    pub comp_ref: [u8; 5],
++    pub y_mode: [[u8; 9]; 4],
++    pub uv_mode: [[u8; 9]; 10],
++    pub partition: [[u8; 3]; 16],
++    pub mv: Vp9MvProbs,
++}
++
+ pub const REFS_PER_FRAME: usize = 3;
+ 
+ pub const MAX_REF_LF_DELTAS: usize = 4;
+@@ -512,6 +550,10 @@ pub struct Header {
+     pub header_size_in_bytes: u16,
+     /// Indicates the size of the uncompressed header in bytes.
+     pub uncompressed_header_size_in_bytes: u16,
++    /// Reference mode parsed from the compressed header (0: SINGLE, 1: COMPOUND, 2: SELECT).
++    pub reference_mode: u8,
++    /// Probability delta updates parsed from the compressed header (Spec 6.3).
++    pub compressed_header: Vp9CompressedHeader,
+ }
+ 
+ impl Header {
+@@ -1135,9 +1177,240 @@ impl Parser {
+ 
+         hdr.uncompressed_header_size_in_bytes = (r.position() as u16 + 7) / 8;
+ 
++        Self::parse_compressed_header(data, &mut hdr)?;
++
+         Ok(hdr)
+     }
+ 
++    fn decode_term_subexp(bd: &mut BoolDecoder) -> Result<usize, String> {
++        if !bd.read_bool().map_err(|e| e.to_string())? {
++            return bd.read_uint::<usize>(4).map_err(|e| e.to_string());
++        }
++        if !bd.read_bool().map_err(|e| e.to_string())? {
++            return Ok(bd.read_uint::<usize>(4).map_err(|e| e.to_string())? + 16);
++        }
++        if !bd.read_bool().map_err(|e| e.to_string())? {
++            return Ok(bd.read_uint::<usize>(5).map_err(|e| e.to_string())? + 32);
++        }
++        let v = bd.read_uint::<usize>(7).map_err(|e| e.to_string())?;
++        let m = (1usize << 8) - 191;
++        let uniform = if v < m {
++            v
++        } else {
++            let bit = bd.read_bool().map_err(|e| e.to_string())? as usize;
++            (v << 1) - m + bit
++        };
++        Ok(uniform + 64)
++    }
++
++    fn read_diff_update_prob(bd: &mut BoolDecoder) -> Result<u8, String> {
++        if bd.read_bool_with_prob(DIFF_UPDATE_PROB).map_err(|e| e.to_string())? {
++            let delp = Self::decode_term_subexp(bd)?;
++            if delp >= INV_MAP_TABLE.len() {
++                return Err(format!("Invalid delta prob index {}", delp));
++            }
++            Ok(INV_MAP_TABLE[delp])
++        } else {
++            Ok(0)
++        }
++    }
++
++    fn read_mv_update_prob(bd: &mut BoolDecoder) -> Result<u8, String> {
++        if bd.read_bool_with_prob(MV_UPDATE_PROB).map_err(|e| e.to_string())? {
++            let v = bd.read_uint::<u8>(7).map_err(|e| e.to_string())?;
++            Ok((v << 1) | 1)
++        } else {
++            Ok(0)
++        }
++    }
++
++    fn parse_compressed_header(data: &[u8], hdr: &mut Header) -> Result<(), String> {
++        let start = hdr.uncompressed_header_size_in_bytes as usize;
++        let size = hdr.header_size_in_bytes as usize;
++        if size == 0 || start + size > data.len() {
++            return Ok(());
++        }
++
++        let mut bd = BoolDecoder::new(&data[start..start + size]);
++        // VP9 compressed header starts with a 1-bit marker which must be 0.
++        let marker = bd.read_bool().map_err(|e| e.to_string())?;
++        if marker {
++            return Err("Invalid VP9 compressed header marker bit".to_string());
++        }
++
++        let ch = &mut hdr.compressed_header;
++
++        // 6.3.1 tx_mode()
++        if hdr.lossless {
++            ch.tx_mode = 0; // ONLY_4X4
++        } else {
++            let mut tx_mode = bd.read_uint::<u8>(2).map_err(|e| e.to_string())?;
++            if tx_mode == 3 {
++                tx_mode += bd.read_bool().map_err(|e| e.to_string())? as u8;
++            }
++            ch.tx_mode = tx_mode;
++            if ch.tx_mode == 4 {
++                // TX_MODE_SELECT: 6.3.2 tx_mode_probs()
++                for i in 0..2 {
++                    ch.tx8[i][0] = Self::read_diff_update_prob(&mut bd)?;
++                }
++                for i in 0..2 {
++                    for j in 0..2 {
++                        ch.tx16[i][j] = Self::read_diff_update_prob(&mut bd)?;
++                    }
++                }
++                for i in 0..2 {
++                    for j in 0..3 {
++                        ch.tx32[i][j] = Self::read_diff_update_prob(&mut bd)?;
++                    }
++                }
++            }
++        }
++
++        // 6.3.7 read_coef_probs()
++        let max_tx_size = match ch.tx_mode {
++            0 => 0,
++            1 => 1,
++            2 => 2,
++            _ => 3,
++        };
++        for tx_size in 0..=max_tx_size {
++            let update_probs = bd.read_bool().map_err(|e| e.to_string())?;
++            if update_probs {
++                for i in 0..2 {
++                    for j in 0..2 {
++                        for k in 0..6 {
++                            let max_l = if k == 0 { 3 } else { 6 };
++                            for l in 0..max_l {
++                                for m in 0..3 {
++                                    ch.coef[tx_size][i][j][k][l][m] =
++                                        Self::read_diff_update_prob(&mut bd)?;
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++        }
++
++        // 6.3.8 read_skip_prob()
++        for k in 0..3 {
++            ch.skip[k] = Self::read_diff_update_prob(&mut bd)?;
++        }
++
++        let frame_is_intra = matches!(hdr.frame_type, FrameType::KeyFrame) || hdr.intra_only;
++        if !frame_is_intra {
++            // 6.3.9 read_inter_mode_probs()
++            for i in 0..7 {
++                for j in 0..3 {
++                    ch.inter_mode[i][j] = Self::read_diff_update_prob(&mut bd)?;
++                }
++            }
++
++            // 6.3.10 read_interp_filter_probs()
++            if matches!(hdr.interpolation_filter, InterpolationFilter::Switchable) {
++                for i in 0..4 {
++                    for j in 0..2 {
++                        ch.interp_filter[i][j] = Self::read_diff_update_prob(&mut bd)?;
++                    }
++                }
++            }
++
++            // 6.3.11 read_is_inter_probs()
++            for i in 0..4 {
++                ch.is_inter[i] = Self::read_diff_update_prob(&mut bd)?;
++            }
++
++            // 6.3.12 frame_reference_mode()
++            let mut compound_reference_allowed = false;
++            for i in 1..REFS_PER_FRAME {
++                if hdr.ref_frame_sign_bias[i + 1] != hdr.ref_frame_sign_bias[1] {
++                    compound_reference_allowed = true;
++                }
++            }
++            hdr.reference_mode = if compound_reference_allowed {
++                let non_single = bd.read_bool().map_err(|e| e.to_string())?;
++                if !non_single {
++                    0 // SINGLE_REFERENCE
++                } else {
++                    let reference_select = bd.read_bool().map_err(|e| e.to_string())?;
++                    if reference_select {
++                        2 // REFERENCE_MODE_SELECT
++                    } else {
++                        1 // COMPOUND_REFERENCE
++                    }
++                }
++            } else {
++                0 // SINGLE_REFERENCE
++            };
++
++            // 6.3.13 frame_reference_mode_probs()
++            if hdr.reference_mode == 2 {
++                for i in 0..5 {
++                    ch.comp_mode[i] = Self::read_diff_update_prob(&mut bd)?;
++                }
++            }
++            if hdr.reference_mode != 1 {
++                for i in 0..5 {
++                    ch.single_ref[i][0] = Self::read_diff_update_prob(&mut bd)?;
++                    ch.single_ref[i][1] = Self::read_diff_update_prob(&mut bd)?;
++                }
++            }
++            if hdr.reference_mode != 0 {
++                for i in 0..5 {
++                    ch.comp_ref[i] = Self::read_diff_update_prob(&mut bd)?;
++                }
++            }
++
++            // 6.3.14 read_y_mode_probs()
++            for i in 0..4 {
++                for j in 0..9 {
++                    ch.y_mode[i][j] = Self::read_diff_update_prob(&mut bd)?;
++                }
++            }
++
++            // 6.3.15 read_partition_probs()
++            for i in 0..16 {
++                for j in 0..3 {
++                    ch.partition[i][j] = Self::read_diff_update_prob(&mut bd)?;
++                }
++            }
++
++            // 6.3.16 mv_probs()
++            for j in 0..3 {
++                ch.mv.joint[j] = Self::read_mv_update_prob(&mut bd)?;
++            }
++            for i in 0..2 {
++                ch.mv.sign[i] = Self::read_mv_update_prob(&mut bd)?;
++                for j in 0..10 {
++                    ch.mv.classes[i][j] = Self::read_mv_update_prob(&mut bd)?;
++                }
++                ch.mv.class0_bit[i] = Self::read_mv_update_prob(&mut bd)?;
++                for j in 0..10 {
++                    ch.mv.bits[i][j] = Self::read_mv_update_prob(&mut bd)?;
++                }
++            }
++            for i in 0..2 {
++                for j in 0..2 {
++                    for k in 0..3 {
++                        ch.mv.class0_fr[i][j][k] = Self::read_mv_update_prob(&mut bd)?;
++                    }
++                }
++                for k in 0..3 {
++                    ch.mv.fr[i][k] = Self::read_mv_update_prob(&mut bd)?;
++                }
++            }
++            if hdr.allow_high_precision_mv {
++                for i in 0..2 {
++                    ch.mv.class0_hp[i] = Self::read_mv_update_prob(&mut bd)?;
++                    ch.mv.hp[i] = Self::read_mv_update_prob(&mut bd)?;
++                }
++            }
++        }
++
++        Ok(())
++    }
++
+     /// Parse a single VP9 frame.
+     pub fn parse_frame<'a>(
+         &mut self,
+diff --git a/src/decoder/stateless/vp9/v4l2.rs b/src/decoder/stateless/vp9/v4l2.rs
+index 5c5ca9e..9927be1 100644
+--- a/src/decoder/stateless/vp9/v4l2.rs
++++ b/src/decoder/stateless/vp9/v4l2.rs
+@@ -36,7 +36,9 @@ use crate::decoder::stateless::StatelessDecoderBackendPicture;
+ use crate::decoder::Arc;
+ use crate::decoder::BlockingMode;
+ use crate::decoder::DecodedHandle;
++use crate::device::v4l2::stateless::controls::vp9::V4l2CtrlVp9CompressedHdrParams;
+ use crate::device::v4l2::stateless::controls::vp9::V4l2CtrlVp9FrameParams;
++use crate::device::v4l2::stateless::controls::vp9::Vp9V4l2CompressedHdrControl;
+ use crate::device::v4l2::stateless::controls::vp9::Vp9V4l2Control;
+ use crate::video_frame::VideoFrame;
+ use crate::ColorPrimaries;
+@@ -185,10 +187,14 @@ impl<V: VideoFrame> StatelessVp9DecoderBackend for V4l2StatelessDecoderBackend<V
+         let mut request = request.as_ref().borrow_mut();
+ 
+         // We have to do this manually since v4l2r does not directly support VP9
+-        let which = request.which();
+-        ioctl::s_ext_ctrls(&self.device, which, &mut ctrl)
++        ioctl::s_ext_ctrls(&self.device, request.which(), &mut ctrl)
+             .map_err(|e| StatelessBackendError::Other(anyhow::anyhow!(e)))?;
+ 
++        let mut vp9_compressed_hdr_params = V4l2CtrlVp9CompressedHdrParams::new();
++        vp9_compressed_hdr_params.set_compressed_hdr_params(hdr);
++        let mut compressed_hdr_ctrl = Vp9V4l2CompressedHdrControl::from(&vp9_compressed_hdr_params);
++        let _ = ioctl::s_ext_ctrls(&self.device, request.which(), &mut compressed_hdr_ctrl);
++
+         let mut reference_pictures = Vec::<Rc<RefCell<V4l2Picture<V>>>>::new();
+         for frame in reference_frames {
+             if frame.is_some() {
+diff --git a/src/device/v4l2/stateless/controls/vp9.rs b/src/device/v4l2/stateless/controls/vp9.rs
+index 958c2a0..66be7c2 100644
+--- a/src/device/v4l2/stateless/controls/vp9.rs
++++ b/src/device/v4l2/stateless/controls/vp9.rs
+@@ -4,9 +4,11 @@
+ 
+ use std::marker::PhantomData;
+ 
++use v4l2r::bindings::v4l2_ctrl_vp9_compressed_hdr;
+ use v4l2r::bindings::v4l2_ctrl_vp9_frame;
+ use v4l2r::bindings::v4l2_ext_control;
+ use v4l2r::bindings::v4l2_ext_control__bindgen_ty_1;
++use v4l2r::bindings::V4L2_CID_STATELESS_VP9_COMPRESSED_HDR;
+ use v4l2r::bindings::V4L2_CID_STATELESS_VP9_FRAME;
+ use v4l2r::bindings::V4L2_VP9_FRAME_FLAG_ALLOW_HIGH_PREC_MV;
+ use v4l2r::bindings::V4L2_VP9_FRAME_FLAG_COLOR_RANGE_FULL_SWING;
+@@ -131,9 +133,7 @@ impl V4l2CtrlVp9FrameParams {
+         self.handle.tile_cols_log2 = hdr.tile_cols_log2;
+         self.handle.tile_rows_log2 = hdr.tile_rows_log2;
+ 
+-        // The MTK V4L2 stateless driver ignores the reference_mode field current.
+-        // TODO: Implement this properly for future drivers?
+-        self.handle.reference_mode = V4L2_VP9_REFERENCE_MODE_SINGLE_REFERENCE as u8;
++        self.handle.reference_mode = hdr.reference_mode;
+ 
+         for i in 0..(MAX_REF_FRAMES - LAST_FRAME) {
+             self.handle.ref_frame_sign_bias |=
+@@ -216,3 +216,78 @@ impl Drop for Vp9V4l2Control {
+         }
+     }
+ }
++
++#[derive(Default)]
++pub struct V4l2CtrlVp9CompressedHdrParams {
++    handle: v4l2_ctrl_vp9_compressed_hdr,
++}
++
++impl V4l2CtrlVp9CompressedHdrParams {
++    pub fn new() -> Self {
++        Default::default()
++    }
++
++    pub fn set_compressed_hdr_params(&mut self, hdr: &Header) -> &mut Self {
++        let ch = &hdr.compressed_header;
++        self.handle.tx_mode = ch.tx_mode;
++        self.handle.tx8 = ch.tx8;
++        self.handle.tx16 = ch.tx16;
++        self.handle.tx32 = ch.tx32;
++        self.handle.coef = ch.coef;
++        self.handle.skip = ch.skip;
++        self.handle.inter_mode = ch.inter_mode;
++        self.handle.interp_filter = ch.interp_filter;
++        self.handle.is_inter = ch.is_inter;
++        self.handle.comp_mode = ch.comp_mode;
++        self.handle.single_ref = ch.single_ref;
++        self.handle.comp_ref = ch.comp_ref;
++        self.handle.y_mode = ch.y_mode;
++        self.handle.uv_mode = ch.uv_mode;
++        self.handle.partition = ch.partition;
++        self.handle.mv.joint = ch.mv.joint;
++        self.handle.mv.sign = ch.mv.sign;
++        self.handle.mv.classes = ch.mv.classes;
++        self.handle.mv.class0_bit = ch.mv.class0_bit;
++        self.handle.mv.bits = ch.mv.bits;
++        self.handle.mv.class0_fr = ch.mv.class0_fr;
++        self.handle.mv.fr = ch.mv.fr;
++        self.handle.mv.class0_hp = ch.mv.class0_hp;
++        self.handle.mv.hp = ch.mv.hp;
++        self
++    }
++}
++
++pub struct Vp9V4l2CompressedHdrControl(v4l2_ext_control, PhantomData<v4l2_ctrl_vp9_compressed_hdr>);
++
++impl From<&V4l2CtrlVp9CompressedHdrParams> for Vp9V4l2CompressedHdrControl {
++    fn from(params: &V4l2CtrlVp9CompressedHdrParams) -> Self {
++        let payload = Box::new(params.handle);
++
++        Self(
++            v4l2_ext_control {
++                id: V4L2_CID_STATELESS_VP9_COMPRESSED_HDR,
++                size: std::mem::size_of::<v4l2_ctrl_vp9_compressed_hdr>() as u32,
++                __bindgen_anon_1: v4l2_ext_control__bindgen_ty_1 {
++                    p_vp9_compressed_hdr_probs: Box::into_raw(payload),
++                },
++                ..Default::default()
++            },
++            PhantomData,
++        )
++    }
++}
++
++impl AsV4l2ControlSlice for &mut Vp9V4l2CompressedHdrControl {
++    fn as_v4l2_control_slice(&mut self) -> &mut [v4l2_ext_control] {
++        std::slice::from_mut(&mut self.0)
++    }
++}
++
++impl Drop for Vp9V4l2CompressedHdrControl {
++    fn drop(&mut self) {
++        // SAFETY: p_vp9_compressed_hdr_probs contains a pointer to a non-NULL object.
++        unsafe {
++            let _ = Box::from_raw(self.0.__bindgen_anon_1.p_vp9_compressed_hdr_probs);
++        }
++    }
++}
+diff --git a/src/device/v4l2/stateless/device.rs b/src/device/v4l2/stateless/device.rs
+index 4e07983..b5c372f 100644
+--- a/src/device/v4l2/stateless/device.rs
++++ b/src/device/v4l2/stateless/device.rs
+@@ -127,7 +127,7 @@ impl<V: VideoFrame> DeviceHandle<V> {
+     }
+     fn sync(&mut self, timestamp: u64) -> V4l2CaptureBuffer<V> {
+         let mut back_off_duration = Duration::from_millis(1);
+-        let time_out = Duration::from_millis(120);
++        let time_out = Duration::from_millis(2000);
+         loop {
+             match self.capture_queue.dequeue_buffer() {
+                 Ok(Some(buffer)) => {
+@@ -190,10 +190,11 @@ impl<V: VideoFrame> V4l2Device<V> {
+         Ok(())
+     }
+ 
+-    pub fn initialize_capture_queue(&mut self, num_buffers: u32) -> Result<(), anyhow::Error> {
++    pub fn initialize_capture_queue(&mut self, num_buffers: u32) -> Result<Resolution, anyhow::Error> {
+         let mut handle = self.handle.as_ref().ok_or(QueueError::InvalidDevice)?.borrow_mut();
+         handle.capture_queue.initialize(num_buffers)?;
+-        Ok(())
++        let (width, height) = handle.capture_queue.coded_size();
++        Ok(Resolution::from((width, height)))
+     }
+ 
+     pub fn alloc_request(
+diff --git a/src/device/v4l2/stateless/queue.rs b/src/device/v4l2/stateless/queue.rs
+index c5f318a..376337d 100644
+--- a/src/device/v4l2/stateless/queue.rs
++++ b/src/device/v4l2/stateless/queue.rs
+@@ -311,7 +311,10 @@ impl<V: VideoFrame> V4l2CaptureBuffer<V> {
+         Self { frame, handle }
+     }
+     pub fn timestamp(&self) -> u64 {
+-        self.handle.data.timestamp().tv_usec as u64
++        // Timestamps are queued as (0 s, N us). The kernel stores them in nanoseconds and
++        // normalizes them on dequeue, so N >= 1_000_000 comes back with a non-zero tv_sec.
++        let timestamp = self.handle.data.timestamp();
++        (timestamp.tv_sec as u64) * 1_000_000 + timestamp.tv_usec as u64
+     }
+     // TODO enable once upstream v4l2r has rolled
+     //    pub fn has_error(&self) -> bool {
+@@ -420,4 +423,8 @@ impl<V: VideoFrame> V4l2CaptureQueue<V> {
+             _ => 0,
+         }
+     }
++
++    pub fn coded_size(&self) -> (u32, u32) {
++        (self.format.width, self.format.height)
++    }
+ }
+diff --git a/src/video_frame.rs b/src/video_frame.rs
+index 1afa445..510414c 100644
+--- a/src/video_frame.rs
++++ b/src/video_frame.rs
+@@ -367,7 +367,11 @@ impl<V: VideoFrame> BufferHandles for V4l2VideoFrame<V> {
+     type SupportedMemoryType = MemoryType;
+ 
+     fn len(&self) -> usize {
+-        self.0.num_planes()
++        if self.0.is_contiguous() {
++            1
++        } else {
++            self.0.num_planes()
++        }
+     }
+ 
+     fn fill_v4l2_plane(&self, index: usize, plane: &mut v4l2_plane) {
+diff --git a/src/video_frame/v4l2_mmap_video_frame.rs b/src/video_frame/v4l2_mmap_video_frame.rs
+index e0c07b3..fb0aba2 100644
+--- a/src/video_frame/v4l2_mmap_video_frame.rs
++++ b/src/video_frame/v4l2_mmap_video_frame.rs
+@@ -24,10 +24,24 @@ use v4l2r::Format;
+ 
+ pub struct V4l2MmapMapping {
+     planes: Vec<PlaneMapping>,
++    contiguous_plane_sizes: Option<Vec<usize>>,
+ }
+ 
+ impl<'a> ReadMapping<'a> for V4l2MmapMapping {
+     fn get(&self) -> Vec<&[u8]> {
++        if let Some(sizes) = &self.contiguous_plane_sizes {
++            if self.planes.len() == 1 && sizes.len() > 1 {
++                let data: &[u8] = &*self.planes[0].data;
++                let mut ret = Vec::with_capacity(sizes.len());
++                let mut offset = 0;
++                for &sz in sizes {
++                    let end = (offset + sz).min(data.len());
++                    ret.push(&data[offset..end]);
++                    offset = end;
++                }
++                return ret;
++            }
++        }
+         self.planes.iter().map(|x| &*x.data).collect()
+     }
+ }
+@@ -60,27 +74,25 @@ impl Debug for V4l2MmapVideoFrame {
+ 
+ impl V4l2MmapVideoFrame {
+     pub fn new(fourcc: Fourcc, visible_rect: Rect) -> Self {
+-        let ret = V4l2MmapVideoFrame {
++        V4l2MmapVideoFrame {
+             fourcc,
+             visible_rect,
+             handle: MmapHandle {},
+             device: None,
+             queue_format: None,
+             buffer: None,
+-        };
+-
+-        if ret.is_contiguous() {
+-            todo!("Contiguous formats are not currently supported for MMAP!");
+         }
+-
+-        ret
+     }
+ 
+     fn map_helper(&self) -> Result<V4l2MmapMapping, String> {
+         let device = self.device.as_ref().ok_or("No V4L2 device!".to_string())?;
+         // SAFETY: The unsafe block is just because we're accessing a union, which is guaranteed
+         // to be initialized in this circumstance because the handle is of type MmapHandle.
+-        // TODO: This will not work for single planar video formats such as NV12.
++        let contiguous_plane_sizes = if self.is_contiguous() && self.num_planes() > 1 {
++            Some(self.get_plane_size())
++        } else {
++            None
++        };
+         Ok(V4l2MmapMapping {
+             planes: self
+                 .buffer
+@@ -91,6 +103,7 @@ impl V4l2MmapVideoFrame {
+                 .map(|x| unsafe { mmap(device, x.m.mem_offset, x.length) })
+                 .collect::<Result<Vec<_>, _>>()
+                 .map_err(|err| format!("Error mmap'ing buffer {err}"))?,
++            contiguous_plane_sizes,
+         })
+     }
+ }
+@@ -117,7 +130,27 @@ impl VideoFrame for V4l2MmapVideoFrame {
+ 
+     fn get_plane_size(&self) -> Vec<usize> {
+         match self.buffer.as_ref() {
+-            Some(buffer) => buffer.as_v4l2_planes().iter().map(|x| x.length as usize).collect(),
++            Some(buffer) => {
++                let v4l2_planes = buffer.as_v4l2_planes();
++                if self.is_contiguous() && v4l2_planes.len() == 1 && self.num_planes() == 2 {
++                    let total = v4l2_planes[0].length as usize;
++                    let y_size = match self.queue_format.as_ref() {
++                        Some(format) if !format.plane_fmt.is_empty() => {
++                            let pitch = format.plane_fmt[0].bytesperline as usize;
++                            let height = format.height as usize;
++                            if pitch > 0 && height > 0 && pitch * height < total {
++                                pitch * height
++                            } else {
++                                total * 2 / 3
++                            }
++                        }
++                        _ => total * 2 / 3,
++                    };
++                    vec![y_size, total.saturating_sub(y_size)]
++                } else {
++                    v4l2_planes.iter().map(|x| x.length as usize).collect()
++                }
++            }
+             None => {
+                 let mut plane_size: Vec<usize> = vec![];
+                 let vertical_subsampling = self.get_vertical_subsampling();
+@@ -141,7 +174,16 @@ impl VideoFrame for V4l2MmapVideoFrame {
+ 
+     fn get_plane_pitch(&self) -> Vec<usize> {
+         match self.queue_format.as_ref() {
+-            Some(format) => format.plane_fmt.iter().map(|x| x.bytesperline as usize).collect(),
++            Some(format) => {
++                if self.is_contiguous() && format.plane_fmt.len() == 1 && self.num_planes() > 1 {
++                    let base_pitch = format.plane_fmt[0].bytesperline as usize;
++                    zip(self.get_bytes_per_element(), self.get_horizontal_subsampling())
++                        .map(|(bpp, hsub)| ((base_pitch as f32) * bpp / (hsub as f32)) as usize)
++                        .collect()
++                } else {
++                    format.plane_fmt.iter().map(|x| x.bytesperline as usize).collect()
++                }
++            }
+             None => {
+                 let extent_width = self.visible_rect.x + self.visible_rect.width;
+                 zip(self.get_bytes_per_element(), self.get_horizontal_subsampling())

@@ -131,15 +131,6 @@ on post-fs
     chmod 0660 /dev/rfkill
     chown uhid uhid /dev/uhid
     chmod 0660 /dev/uhid
-    # 6.6.34-phase2 builds CONFIG_DMABUF_HEAPS_CMA=y (/dev/dma_heap/reserved,
-    # 253:0) without CONFIG_DMABUF_HEAPS_SYSTEM. Codec2 (debug.c2.use_dmabufheaps=1)
-    # opens /dev/dma_heap/system; expose the same char node with system_heap label.
-    chown system system /dev/dma_heap/reserved
-    chmod 0444 /dev/dma_heap/reserved
-    exec - root root -- /system/bin/mknod /dev/dma_heap/system c 253 0
-    chown system system /dev/dma_heap/system
-    chmod 0444 /dev/dma_heap/system
-    restorecon /dev/dma_heap/system
     chown system system /dev/iio:device0
     chmod 0660 /dev/iio:device0
     chown system system /sys/bus/iio/devices/iio:device0/buffer/enable

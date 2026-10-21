@@ -1,0 +1,1047 @@
+diff --git a/common/include/v4l2_codec2/common/Common.h b/common/include/v4l2_codec2/common/Common.h
+index ac55bd2..0f356c1 100644
+--- a/common/include/v4l2_codec2/common/Common.h
++++ b/common/include/v4l2_codec2/common/Common.h
+@@ -52,6 +52,9 @@ struct SupportedCapabilities {
+     C2Config::profile_t defaultProfile = C2Config::PROFILE_UNUSED;
+     std::vector<C2Config::level_t> supportedLevels;
+     C2Config::level_t defaultLevel = C2Config::LEVEL_UNUSED;
++    // The decoder copies the bitstream into its own buffers instead of importing the input
++    // buffer, so the input buffer only needs to hold one compressed frame.
++    bool copiesInput = false;
+ };
+ 
+ // Check whether |rect1| completely contains |rect2|.
+diff --git a/components/Android.bp b/components/Android.bp
+index ecb5fed..9d96ba1 100644
+--- a/components/Android.bp
++++ b/components/Android.bp
+@@ -35,12 +35,14 @@ cc_library {
+     ],
+     shared_libs: [
+         "android.hardware.graphics.common@1.0",
++        "android.hardware.media.bufferpool2-V2-ndk",
+         "libc2plugin_store",
+         "libchrome",
+         "libcodec2_soft_common",
+         "libcutils",
+         "liblog",
+         "libsfplugin_ccodec_utils",
++        "libstagefright_aidl_bufferpool2",
+         "libstagefright_bufferqueue_helper",
+         "libstagefright_foundation",
+         "libui",
+diff --git a/components/DecodeInterface.cpp b/components/DecodeInterface.cpp
+index 558c0ea..14915f6 100644
+--- a/components/DecodeInterface.cpp
++++ b/components/DecodeInterface.cpp
+@@ -29,6 +29,8 @@ constexpr size_t k4KArea = 3840 * 2160;
+ constexpr size_t kInputBufferSizeFor1080p = 16 * 1024 * 1024;  // 16MB
+ // Input bitstream buffer size for up to 4k streams.
+ constexpr size_t kInputBufferSizeFor4K = 4 * kInputBufferSizeFor1080p;
++// Minimum input buffer size for decoders that copy the bitstream, same as the software decoders.
++constexpr size_t kMinCopiedInputBufferSize = 2 * 1024 * 1024;
+ 
+ size_t calculateInputBufferSize(size_t area) {
+     if (area > k4KArea) {
+@@ -107,6 +109,20 @@ C2R DecodeInterface::MaxInputBufferSizeCalculator(
+     return C2R::Ok();
+ }
+ 
++// static
++C2R DecodeInterface::CopiedInputBufferSizeCalculator(
++        bool /* mayBlock */, C2P<C2StreamMaxBufferSizeInfo::input>& me,
++        const C2P<C2StreamPictureSizeInfo::output>& size) {
++    // Assume a compression ratio of 2, i.e. 192 bytes per 16x16 macroblock.
++    const size_t calculatedSize =
++            std::max<size_t>(((size.v.width + 15) / 16) * ((size.v.height + 15) / 16) * 192,
++                             kMinCopiedInputBufferSize);
++
++    if (me.v.value < calculatedSize) me.set().value = calculatedSize;
++
++    return C2R::Ok();
++}
++
+ DecodeInterface::DecodeInterface(const std::string& name,
+                                  const std::shared_ptr<C2ReflectorHelper>& helper,
+                                  const SupportedCapabilities& caps)
+@@ -328,12 +344,16 @@ DecodeInterface::DecodeInterface(const std::string& name,
+ 
+     addParameter(
+             DefineParam(mMaxInputSize, C2_PARAMKEY_INPUT_MAX_BUFFER_SIZE)
+-                    .withDefault(new C2StreamMaxBufferSizeInfo::input(0u, kInputBufferSizeFor1080p))
++                    .withDefault(new C2StreamMaxBufferSizeInfo::input(
++                            0u, caps.copiesInput ? kMinCopiedInputBufferSize
++                                                 : kInputBufferSizeFor1080p))
+                     .withFields({
+                             C2F(mMaxInputSize, value).any(),
+                     })
+                     .withSetter(InputSizeSetter)
+-                    .calculatedAs(MaxInputBufferSizeCalculator, mSize)
++                    .calculatedAs(caps.copiesInput ? CopiedInputBufferSizeCalculator
++                                                   : MaxInputBufferSizeCalculator,
++                                  mSize)
+                     .build());
+ 
+     bool secureMode = name.find(".secure") != std::string::npos;
+diff --git a/components/VideoFrame.cpp b/components/VideoFrame.cpp
+index b7481ad..5ed2898 100644
+--- a/components/VideoFrame.cpp
++++ b/components/VideoFrame.cpp
+@@ -34,6 +34,10 @@ const std::vector<int>& VideoFrame::getFDs() const {
+     return mFds;
+ }
+ 
++const C2Handle* VideoFrame::getHandle() const {
++    return mGraphicBlock->handle();
++}
++
+ void VideoFrame::setVisibleRect(const Rect& visibleRect) {
+     mVisibleRect = visibleRect;
+ }
+diff --git a/components/VideoFramePool.cpp b/components/VideoFramePool.cpp
+index ae5cd34..ad33d44 100644
+--- a/components/VideoFramePool.cpp
++++ b/components/VideoFramePool.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include <C2BlockInternal.h>
+ #include <bufferpool/BufferPoolTypes.h>
++#include <bufferpool2/BufferPoolTypes.h>
+ 
+ #include <android/hardware_buffer.h>
+ #include <android/hardware/graphics/common/1.0/types.h>
+@@ -26,6 +27,7 @@
+ 
+ using android::hardware::graphics::common::V1_0::BufferUsage;
+ using android::hardware::media::bufferpool::BufferPoolData;
++using AidlBufferPoolData = aidl::android::hardware::media::bufferpool2::BufferPoolData;
+ 
+ namespace android {
+ 
+@@ -74,16 +76,31 @@ std::optional<uint32_t> VideoFramePool::getBufferIdFromGraphicBlock(C2BlockPool&
+     case V4L2AllocatorId::SECURE_LINEAR: {
+         std::shared_ptr<_C2BlockPoolData> blockPoolData =
+                 _C2BlockFactory::GetGraphicBlockPoolData(block);
+-        if (blockPoolData->getType() != _C2BlockPoolData::TYPE_BUFFERPOOL) {
++        if (!blockPoolData) {
+             ALOGE("Obtained C2GraphicBlock is not bufferpool-backed.");
+             return std::nullopt;
+         }
+-        std::shared_ptr<BufferPoolData> bpData;
+-        if (!_C2BlockFactory::GetBufferPoolData(blockPoolData, &bpData) || !bpData) {
+-            ALOGE("BufferPoolData unavailable in block.");
++        switch (blockPoolData->getType()) {
++        case _C2BlockPoolData::TYPE_BUFFERPOOL: {
++            std::shared_ptr<BufferPoolData> bpData;
++            if (!_C2BlockFactory::GetBufferPoolData(blockPoolData, &bpData) || !bpData) {
++                ALOGE("BufferPoolData unavailable in block.");
++                return std::nullopt;
++            }
++            return bpData->mId;
++        }
++        case _C2BlockPoolData::TYPE_BUFFERPOOL2: {
++            std::shared_ptr<AidlBufferPoolData> bpData;
++            if (!_C2BlockFactory::GetBufferPoolData(blockPoolData, &bpData) || !bpData) {
++                ALOGE("AIDL BufferPoolData unavailable in block.");
++                return std::nullopt;
++            }
++            return bpData->mId;
++        }
++        default:
++            ALOGE("Obtained C2GraphicBlock is not bufferpool-backed.");
+             return std::nullopt;
+         }
+-        return bpData->mId;
+     }
+     }
+ 
+diff --git a/components/include/v4l2_codec2/components/DecodeInterface.h b/components/include/v4l2_codec2/components/DecodeInterface.h
+index 7e513c5..180623a 100644
+--- a/components/include/v4l2_codec2/components/DecodeInterface.h
++++ b/components/include/v4l2_codec2/components/DecodeInterface.h
+@@ -44,6 +44,9 @@ private:
+     static C2R MaxInputBufferSizeCalculator(bool mayBlock,
+                                             C2P<C2StreamMaxBufferSizeInfo::input>& me,
+                                             const C2P<C2StreamPictureSizeInfo::output>& size);
++    static C2R CopiedInputBufferSizeCalculator(bool mayBlock,
++                                               C2P<C2StreamMaxBufferSizeInfo::input>& me,
++                                               const C2P<C2StreamPictureSizeInfo::output>& size);
+ 
+     template <typename T>
+     static C2R DefaultColorAspectsSetter(bool mayBlock, C2P<T>& def);
+diff --git a/components/include/v4l2_codec2/components/VideoFrame.h b/components/include/v4l2_codec2/components/VideoFrame.h
+index b5d7b99..897a05d 100644
+--- a/components/include/v4l2_codec2/components/VideoFrame.h
++++ b/components/include/v4l2_codec2/components/VideoFrame.h
+@@ -24,6 +24,9 @@ public:
+     // Return the file descriptors of the corresponding buffer.
+     const std::vector<int>& getFDs() const;
+ 
++    // Return the native handle of the underlying C2GraphicBlock.
++    const C2Handle* getHandle() const;
++
+     // Getter and setter of the visible rectangle.
+     void setVisibleRect(const Rect& visibleRect);
+     const Rect& getVisibleRect() const;
+diff --git a/v4l2/Android.bp b/v4l2/Android.bp
+index fe8043b..36bc12b 100644
+--- a/v4l2/Android.bp
++++ b/v4l2/Android.bp
+@@ -25,6 +25,7 @@ cc_library {
+         "V4L2DevicePoller.cpp",
+         "V4L2Encoder.cpp",
+         "V4L2EncodeComponent.cpp",
++        "StatelessV4L2Decoder.cpp",
+     ],
+     export_include_dirs: [
+         "include",
+@@ -38,6 +39,7 @@ cc_library {
+         "libc2plugin_store",
+         "libchrome",
+         "libcodec2_soft_common",
++        "libcros_codecs_ffi",
+         "libcutils",
+         "liblog",
+         "libsfplugin_ccodec_utils",
+diff --git a/v4l2/StatelessV4L2Decoder.cpp b/v4l2/StatelessV4L2Decoder.cpp
+new file mode 100644
+index 0000000..a80aade
+--- /dev/null
++++ b/v4l2/StatelessV4L2Decoder.cpp
+@@ -0,0 +1,557 @@
++// Copyright 2026 The LineageOS Project
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++//#define LOG_NDEBUG 0
++#define ATRACE_TAG ATRACE_TAG_VIDEO
++#define LOG_TAG "StatelessV4L2Decoder"
++
++#include <v4l2_codec2/v4l2/StatelessV4L2Decoder.h>
++
++#include <inttypes.h>
++#include <unistd.h>
++
++#include <algorithm>
++#include <vector>
++
++#include <C2AllocatorGralloc.h>
++#include <base/bind.h>
++#include <base/memory/ptr_util.h>
++#include <linux/videodev2.h>
++#include <log/log.h>
++#include <ui/GraphicBuffer.h>
++#include <ui/GraphicBufferMapper.h>
++#include <utils/Trace.h>
++
++namespace android {
++namespace {
++
++// Number of output buffers on top of the decoder's own requirement (DPB plus the CAPTURE slots
++// cros-codecs keeps in flight): the frames held by the client and the component.
++constexpr size_t kNumExtraOutputBuffers = 7;
++// Number of free frames to keep fetched from the pool ahead of time.
++constexpr size_t kNumPrefetchedFrames = 2;
++// Number of consecutive cros-codecs calls without progress before giving up.
++constexpr int kMaxCallsWithoutProgress = 16;
++
++uint32_t toCcCodec(VideoCodec codec, bool* ok) {
++    *ok = true;
++    switch (codec) {
++    case VideoCodec::H264:
++        return CC_CODEC_H264;
++    case VideoCodec::VP8:
++        return CC_CODEC_VP8;
++    case VideoCodec::VP9:
++        return CC_CODEC_VP9;
++    default:
++        *ok = false;
++        return 0;
++    }
++}
++
++}  // namespace
++
++// static
++std::unique_ptr<VideoDecoder> StatelessV4L2Decoder::Create(
++        uint32_t debugStreamId, VideoCodec codec, size_t minNumOutputBuffers, GetPoolCB getPoolCb,
++        OutputCB outputCb, ErrorCB errorCb,
++        scoped_refptr<::base::SequencedTaskRunner> taskRunner) {
++    std::unique_ptr<StatelessV4L2Decoder> decoder = ::base::WrapUnique<StatelessV4L2Decoder>(
++            new StatelessV4L2Decoder(debugStreamId, minNumOutputBuffers, std::move(getPoolCb),
++                                     std::move(outputCb), std::move(errorCb),
++                                     std::move(taskRunner)));
++    if (!decoder->initialize(codec)) {
++        return nullptr;
++    }
++    return decoder;
++}
++
++StatelessV4L2Decoder::StatelessV4L2Decoder(uint32_t debugStreamId, size_t minNumOutputBuffers,
++                                           GetPoolCB getPoolCb, OutputCB outputCb,
++                                           ErrorCB errorCb,
++                                           scoped_refptr<::base::SequencedTaskRunner> taskRunner)
++      : mDebugStreamId(debugStreamId),
++        mMinNumOutputBuffers(minNumOutputBuffers),
++        mGetPoolCb(std::move(getPoolCb)),
++        mOutputCb(std::move(outputCb)),
++        mErrorCb(std::move(errorCb)),
++        mTaskRunner(std::move(taskRunner)) {
++    ALOGV("%s()", __func__);
++    mWeakThis = mWeakThisFactory.GetWeakPtr();
++}
++
++StatelessV4L2Decoder::~StatelessV4L2Decoder() {
++    ALOGV("%s()", __func__);
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++
++    mWeakThisFactory.InvalidateWeakPtrs();
++
++    // Destroying the decoder fires the release callbacks of all frames it still references.
++    if (mFfiDecoder) {
++        cros_codecs_decoder_destroy(mFfiDecoder);
++        mFfiDecoder = nullptr;
++    }
++    mFramesAtDecoder.clear();
++    mDeferredFrames.clear();
++    mAvailableFrames.clear();
++    mVideoFramePool.reset();
++}
++
++bool StatelessV4L2Decoder::initialize(VideoCodec codec) {
++    ALOGV("%s(codec=%s)", __func__, VideoCodecToString(codec));
++
++    bool ok;
++    const uint32_t ccCodec = toCcCodec(codec, &ok);
++    if (!ok) {
++        ALOGE("Codec %s is not supported by cros-codecs", VideoCodecToString(codec));
++        return false;
++    }
++
++    mFfiDecoder = cros_codecs_decoder_create(ccCodec, this, &StatelessV4L2Decoder::AllocFrameThunk,
++                                             &StatelessV4L2Decoder::ReleaseFrameThunk);
++    if (!mFfiDecoder) {
++        ALOGE("Failed to create cros-codecs %s decoder", VideoCodecToString(codec));
++        return false;
++    }
++    ALOGI("Created cros-codecs %s decoder (stream %u)", VideoCodecToString(codec), mDebugStreamId);
++    return true;
++}
++
++void StatelessV4L2Decoder::decode(std::unique_ptr<ConstBitstreamBuffer> buffer,
++                                  DecodeCB decodeCb) {
++    ATRACE_CALL();
++    ALOGV("%s(id=%d)", __func__, buffer->id);
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++
++    if (mError) {
++        std::move(decodeCb).Run(DecodeStatus::kError);
++        return;
++    }
++
++    DecodeRequest request;
++    request.buffer = std::move(buffer);
++    request.decodeCb = std::move(decodeCb);
++    mDecodeRequests.push(std::move(request));
++    schedulePump();
++}
++
++void StatelessV4L2Decoder::drain(DecodeCB drainCb) {
++    ATRACE_CALL();
++    ALOGV("%s()", __func__);
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++
++    if (mError) {
++        std::move(drainCb).Run(DecodeStatus::kError);
++        return;
++    }
++
++    DecodeRequest request;
++    request.decodeCb = std::move(drainCb);
++    mDecodeRequests.push(std::move(request));
++    schedulePump();
++}
++
++void StatelessV4L2Decoder::flush() {
++    ATRACE_CALL();
++    ALOGV("%s()", __func__);
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++
++    while (!mDecodeRequests.empty()) {
++        DecodeCB decodeCb = std::move(mDecodeRequests.front().decodeCb);
++        mDecodeRequests.pop();
++        std::move(decodeCb).Run(DecodeStatus::kAborted);
++    }
++    mNumFramesNeeded = 0;
++
++    if (mError) {
++        return;
++    }
++
++    // Frames still pending in the DPB belong to the abandoned works and are dropped.
++    mDiscardOutput = true;
++    if (cros_codecs_decoder_flush(mFfiDecoder) != CC_STATUS_OK) {
++        ALOGE("Failed to flush cros-codecs decoder");
++        onError();
++    } else {
++        processEvents();
++    }
++    mDiscardOutput = false;
++}
++
++void StatelessV4L2Decoder::schedulePump() {
++    if (mPumpScheduled) {
++        return;
++    }
++    mPumpScheduled = true;
++    mTaskRunner->PostTask(FROM_HERE, ::base::BindOnce(&StatelessV4L2Decoder::pumpDecodeRequests,
++                                                      mWeakThis));
++}
++
++void StatelessV4L2Decoder::pumpDecodeRequests() {
++    ATRACE_CALL();
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++
++    mPumpScheduled = false;
++    mNumFramesNeeded = 0;
++
++    while (!mDecodeRequests.empty() && !mError) {
++        DecodeRequest& request = mDecodeRequests.front();
++
++        if (!request.buffer) {
++            ALOGV("Draining");
++            if (cros_codecs_decoder_flush(mFfiDecoder) != CC_STATUS_OK) {
++                ALOGE("Failed to drain cros-codecs decoder");
++                onError();
++                return;
++            }
++            if (processEvents() < 0) {
++                return;
++            }
++            DecodeCB drainCb = std::move(request.decodeCb);
++            mDecodeRequests.pop();
++            std::move(drainCb).Run(DecodeStatus::kOk);
++            continue;
++        }
++
++        if (!request.view) {
++            request.view.emplace(request.buffer->dmabuf.map().get());
++            if (request.view->error() != C2_OK) {
++                ALOGE("Failed to map bitstream buffer %d: %d", request.buffer->id,
++                      request.view->error());
++                onError();
++                return;
++            }
++        }
++
++        const int32_t bitstreamId = request.buffer->id;
++        const uint8_t* data = request.view->data();
++        const size_t size = std::min<size_t>(request.buffer->size, request.view->capacity());
++        int callsWithoutProgress = 0;
++        while (request.offset < size) {
++            size_t consumed = 0;
++            const int32_t status =
++                    cros_codecs_decoder_decode(mFfiDecoder, static_cast<uint64_t>(bitstreamId),
++                                               data, size, request.offset, false, &consumed);
++            const int numEvents = processEvents();
++            if (numEvents < 0 || mError) {
++                return;
++            }
++
++            if (status == CC_STATUS_OK) {
++                callsWithoutProgress = 0;
++                request.offset = consumed > 0 ? request.offset + consumed : size;
++                continue;
++            }
++            if (status == CC_STATUS_NEED_FRAMES) {
++                mNumFramesNeeded = mAvailableFrames.size() + 1;
++                ALOGV("Waiting for %zu output frames (bitstream %d)", mNumFramesNeeded,
++                      bitstreamId);
++                tryFetchVideoFrame();
++                return;
++            }
++            if (status == CC_STATUS_ERROR) {
++                ALOGE("Failed to decode bitstream %d", bitstreamId);
++                onError();
++                return;
++            }
++            // CHECK_EVENTS or OUT_OF_SLOTS: retry as long as the decoder makes progress.
++            if (numEvents == 0 && ++callsWithoutProgress > kMaxCallsWithoutProgress) {
++                ALOGE("Decoder stuck on bitstream %d (status %d)", bitstreamId, status);
++                onError();
++                return;
++            }
++        }
++
++        DecodeCB decodeCb = std::move(request.decodeCb);
++        mDecodeRequests.pop();
++        std::move(decodeCb).Run(DecodeStatus::kOk);
++    }
++}
++
++int StatelessV4L2Decoder::processEvents() {
++    int numEvents = 0;
++    CcEvent event;
++    while (!mError && cros_codecs_decoder_next_event(mFfiDecoder, &event)) {
++        ++numEvents;
++        switch (event.type) {
++        case CC_EVENT_FRAME:
++            onFrameReady(event);
++            break;
++        case CC_EVENT_FORMAT_CHANGED:
++            if (!onFormatChanged(event)) {
++                onError();
++            }
++            break;
++        case CC_EVENT_CSD:
++            break;
++        default:
++            ALOGW("Unknown cros-codecs event %u", event.type);
++            break;
++        }
++    }
++    return mError ? -1 : numEvents;
++}
++
++bool StatelessV4L2Decoder::onFormatChanged(const CcEvent& event) {
++    ALOGI("Format changed: coded %ux%u, visible (%u,%u)-(%u,%u), %u min frames, fourcc %08x",
++          event.coded_width, event.coded_height, event.visible_left, event.visible_top,
++          event.visible_right, event.visible_bottom, event.min_num_frames, event.fourcc);
++
++    if (event.fourcc != V4L2_PIX_FMT_NV12) {
++        ALOGE("Unsupported output fourcc %08x", event.fourcc);
++        return false;
++    }
++    if (event.coded_width == 0 || event.coded_height == 0) {
++        ALOGE("Invalid coded size %ux%u", event.coded_width, event.coded_height);
++        return false;
++    }
++
++    mCodedSize = ui::Size(event.coded_width, event.coded_height);
++    mVisibleRect = Rect(event.visible_left, event.visible_top, event.visible_right,
++                        event.visible_bottom);
++    if (mVisibleRect.isEmpty()) {
++        mVisibleRect = Rect(mCodedSize.width, mCodedSize.height);
++    }
++
++    // Frames of the previous pool still referenced by cros-codecs are dropped on release.
++    mPoolGeneration++;
++    mFetchPending = false;
++    mAvailableFrames.clear();
++    mDeferredFrames.clear();
++    mBlockIdToToken.clear();
++    mPlaneLayouts.reset();
++
++    // Release the old pool first, so the old and new buffers never exist at the same time.
++    mVideoFramePool.reset();
++    const size_t numOutputBuffers =
++            std::max(mMinNumOutputBuffers, event.min_num_frames + kNumExtraOutputBuffers);
++    mVideoFramePool = mGetPoolCb.Run(mCodedSize, HalPixelFormat::YCBCR_420_888, numOutputBuffers);
++    if (!mVideoFramePool) {
++        ALOGE("Failed to get video frame pool of size %dx%d", mCodedSize.width,
++              mCodedSize.height);
++        return false;
++    }
++
++    tryFetchVideoFrame();
++    return true;
++}
++
++void StatelessV4L2Decoder::onFrameReady(const CcEvent& event) {
++    ALOGV("%s(bitstreamId=%" PRIu64 ", token=%" PRIu64 ")", __func__, event.timestamp,
++          event.token);
++
++    auto it = mFramesAtDecoder.find(event.token);
++    if (it == mFramesAtDecoder.end()) {
++        ALOGE("Decoder returned unknown frame %" PRIu64, event.token);
++        onError();
++        return;
++    }
++    if (mDiscardOutput) {
++        return;
++    }
++    if (!it->second.frame) {
++        // VP9 show_existing_frame of a frame that was already output. DecodeComponent treats the
++        // corresponding work as a no-show frame.
++        ALOGW("Frame %" PRIu64 " was already output, dropping bitstream %" PRIu64, event.token,
++              event.timestamp);
++        return;
++    }
++
++    std::unique_ptr<VideoFrame> frame = std::move(it->second.frame);
++    Rect visibleRect(event.visible_left, event.visible_top, event.visible_right,
++                     event.visible_bottom);
++    frame->setVisibleRect(visibleRect.isEmpty() ? mVisibleRect : visibleRect);
++    frame->setBitstreamId(static_cast<int32_t>(event.timestamp));
++    mOutputCb.Run(std::move(frame));
++}
++
++void StatelessV4L2Decoder::tryFetchVideoFrame() {
++    if (!mVideoFramePool || mFetchPending || mError) {
++        return;
++    }
++    if (mAvailableFrames.size() >= std::max(kNumPrefetchedFrames, mNumFramesNeeded)) {
++        return;
++    }
++    mFetchPending = mVideoFramePool->getVideoFrame(::base::BindOnce(
++            &StatelessV4L2Decoder::onVideoFrameReady, mWeakThis, mPoolGeneration));
++}
++
++void StatelessV4L2Decoder::onVideoFrameReady(
++        uint64_t poolGeneration, std::optional<VideoFramePool::FrameWithBlockId> frameWithBlockId) {
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++
++    if (poolGeneration != mPoolGeneration) {
++        return;
++    }
++    mFetchPending = false;
++    if (!frameWithBlockId || !frameWithBlockId->first) {
++        ALOGE("Failed to get a video frame from the pool");
++        onError();
++        return;
++    }
++
++    const uint32_t blockId = frameWithBlockId->second;
++    ALOGV("%s(blockId=%u)", __func__, blockId);
++    if (mBlockIdToToken.find(blockId) != mBlockIdToToken.end()) {
++        mDeferredFrames[blockId] = std::move(frameWithBlockId->first);
++    } else {
++        mAvailableFrames.push_back(std::move(*frameWithBlockId));
++    }
++
++    if (mNumFramesNeeded > 0 && mAvailableFrames.size() >= mNumFramesNeeded) {
++        schedulePump();
++    }
++    tryFetchVideoFrame();
++}
++
++std::optional<StatelessV4L2Decoder::PlaneLayouts> StatelessV4L2Decoder::queryPlaneLayouts(
++        const VideoFrame& frame) const {
++    PlaneLayouts layouts;
++
++    native_handle_t* grallocHandle = UnwrapNativeCodec2GrallocHandle(frame.getHandle());
++    if (grallocHandle) {
++        uint32_t width, height, format, stride, generation, igbpSlot;
++        uint64_t usage, igbpId;
++        _UnwrapNativeCodec2GrallocMetadata(frame.getHandle(), &width, &height, &format, &usage,
++                                           &stride, &generation, &igbpId, &igbpSlot);
++        sp<GraphicBuffer> buffer = new GraphicBuffer(grallocHandle, GraphicBuffer::CLONE_HANDLE,
++                                                     width, height, format, 1, usage, stride);
++        native_handle_delete(grallocHandle);
++
++        std::vector<ui::PlaneLayout> planeLayouts;
++        if (buffer->initCheck() == OK &&
++            GraphicBufferMapper::get().getPlaneLayouts(buffer->handle, &planeLayouts) == OK &&
++            planeLayouts.size() == 2) {
++            layouts.numPlanes = 2;
++            for (size_t i = 0; i < 2; ++i) {
++                layouts.offsets[i] = planeLayouts[i].offsetInBytes;
++                layouts.strides[i] = planeLayouts[i].strideInBytes;
++            }
++            ALOGI("Output buffer layout: Y offset %" PRIu64 " stride %" PRIu64
++                  ", UV offset %" PRIu64 " stride %" PRIu64,
++                  layouts.offsets[0], layouts.strides[0], layouts.offsets[1], layouts.strides[1]);
++            return layouts;
++        }
++        ALOGW("Failed to query the plane layouts from gralloc, guessing");
++    }
++
++    // Layout minigbm uses for NV12 video decoder buffers.
++    const uint64_t stride = (static_cast<uint64_t>(mCodedSize.width) + 15) & ~uint64_t{15};
++    layouts.numPlanes = 2;
++    layouts.offsets[0] = 0;
++    layouts.strides[0] = stride;
++    layouts.offsets[1] = stride * mCodedSize.height;
++    layouts.strides[1] = stride;
++    return layouts;
++}
++
++bool StatelessV4L2Decoder::allocFrame(CcFrameDesc* desc) {
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++
++    if (mAvailableFrames.empty() || mError) {
++        return false;
++    }
++
++    VideoFramePool::FrameWithBlockId frameWithBlockId = std::move(mAvailableFrames.front());
++    mAvailableFrames.pop_front();
++    std::unique_ptr<VideoFrame>& frame = frameWithBlockId.first;
++    const uint32_t blockId = frameWithBlockId.second;
++
++    if (!mPlaneLayouts) {
++        mPlaneLayouts = queryPlaneLayouts(*frame);
++    }
++    if (frame->getFDs().empty()) {
++        ALOGE("Output frame of block %u has no fd", blockId);
++        onError();
++        return false;
++    }
++    const int fd = dup(frame->getFDs()[0]);
++    if (fd < 0) {
++        ALOGE("Failed to dup the fd of block %u", blockId);
++        onError();
++        return false;
++    }
++
++    const uint64_t token = mNextToken++;
++    desc->token = token;
++    desc->fd = fd;
++    desc->fourcc = V4L2_PIX_FMT_NV12;
++    desc->width = mCodedSize.width;
++    desc->height = mCodedSize.height;
++    desc->num_planes = mPlaneLayouts->numPlanes;
++    for (uint32_t i = 0; i < mPlaneLayouts->numPlanes; ++i) {
++        desc->offsets[i] = mPlaneLayouts->offsets[i];
++        desc->strides[i] = mPlaneLayouts->strides[i];
++    }
++
++    ALOGV("%s(): block %u as token %" PRIu64, __func__, blockId, token);
++    mBlockIdToToken[blockId] = token;
++    mFramesAtDecoder.emplace(token, FrameAtDecoder{std::move(frame), blockId, mPoolGeneration});
++
++    // Keep the next frame ready for the following picture.
++    tryFetchVideoFrame();
++    return true;
++}
++
++void StatelessV4L2Decoder::releaseFrame(uint64_t token) {
++    ALOG_ASSERT(mTaskRunner->RunsTasksInCurrentSequence());
++
++    auto it = mFramesAtDecoder.find(token);
++    if (it == mFramesAtDecoder.end()) {
++        ALOGE("Release of unknown frame %" PRIu64, token);
++        return;
++    }
++    FrameAtDecoder entry = std::move(it->second);
++    mFramesAtDecoder.erase(it);
++    ALOGV("%s(): token %" PRIu64 " (block %u)", __func__, token, entry.blockId);
++
++    if (entry.poolGeneration != mPoolGeneration) {
++        return;
++    }
++
++    auto blockIt = mBlockIdToToken.find(entry.blockId);
++    if (blockIt != mBlockIdToToken.end() && blockIt->second == token) {
++        mBlockIdToToken.erase(blockIt);
++    }
++
++    if (entry.frame) {
++        // Never output (e.g. dropped by a flush): reuse it directly.
++        mAvailableFrames.emplace_back(std::move(entry.frame), entry.blockId);
++    } else {
++        auto deferredIt = mDeferredFrames.find(entry.blockId);
++        if (deferredIt != mDeferredFrames.end()) {
++            mAvailableFrames.emplace_back(std::move(deferredIt->second), entry.blockId);
++            mDeferredFrames.erase(deferredIt);
++        }
++    }
++
++    if (mNumFramesNeeded > 0 && mAvailableFrames.size() >= mNumFramesNeeded) {
++        schedulePump();
++    }
++}
++
++// static
++bool StatelessV4L2Decoder::AllocFrameThunk(void* ctx, CcFrameDesc* desc) {
++    return static_cast<StatelessV4L2Decoder*>(ctx)->allocFrame(desc);
++}
++
++// static
++void StatelessV4L2Decoder::ReleaseFrameThunk(void* ctx, uint64_t token) {
++    static_cast<StatelessV4L2Decoder*>(ctx)->releaseFrame(token);
++}
++
++void StatelessV4L2Decoder::onError() {
++    if (mError) {
++        return;
++    }
++    mError = true;
++    // May be called from inside a cros-codecs callback: report from a fresh task.
++    mTaskRunner->PostTask(FROM_HERE,
++                          ::base::BindOnce(&StatelessV4L2Decoder::notifyError, mWeakThis));
++}
++
++void StatelessV4L2Decoder::notifyError() {
++    mErrorCb.Run();
++}
++
++}  // namespace android
+diff --git a/v4l2/V4L2DecodeComponent.cpp b/v4l2/V4L2DecodeComponent.cpp
+index 284b094..a9f0291 100644
+--- a/v4l2/V4L2DecodeComponent.cpp
++++ b/v4l2/V4L2DecodeComponent.cpp
+@@ -6,7 +6,9 @@
+ #define LOG_TAG "V4L2DecodeComponent"
+ 
+ #include <v4l2_codec2/v4l2/V4L2DecodeComponent.h>
++#include <v4l2_codec2/v4l2/StatelessV4L2Decoder.h>
+ #include <v4l2_codec2/v4l2/V4L2Decoder.h>
++#include <v4l2_codec2/v4l2/V4L2Device.h>
+ 
+ #include <base/bind.h>
+ #include <base/callback_helpers.h>
+@@ -99,16 +101,26 @@ void V4L2DecodeComponent::startTask(c2_status_t* status, ::base::WaitableEvent*
+ 
+     // ::base::Unretained(this) is safe here because |mDecoder| is always destroyed before
+     // |mDecoderThread| is stopped, so |*this| is always valid during |mDecoder|'s lifetime.
+-    mDecoder = V4L2Decoder::Create(mDebugStreamId, *codec, inputBufferSize, minNumOutputBuffers,
+-                                   ::base::BindRepeating(&V4L2DecodeComponent::getVideoFramePool,
+-                                                         ::base::Unretained(this)),
+-                                   ::base::BindRepeating(&V4L2DecodeComponent::onOutputFrameReady,
+-                                                         ::base::Unretained(this)),
+-                                   ::base::BindRepeating(&V4L2DecodeComponent::reportError,
+-                                                         ::base::Unretained(this), C2_CORRUPTED),
+-                                   mDecoderTaskRunner, mIsSecure);
++    auto getPoolCb = ::base::BindRepeating(&V4L2DecodeComponent::getVideoFramePool,
++                                           ::base::Unretained(this));
++    auto outputCb = ::base::BindRepeating(&V4L2DecodeComponent::onOutputFrameReady,
++                                          ::base::Unretained(this));
++    auto errorCb = ::base::BindRepeating(&V4L2DecodeComponent::reportError,
++                                         ::base::Unretained(this), C2_CORRUPTED);
++    const bool useStateless = !mIsSecure && V4L2Device::hasOnlyStatelessDecoder(*codec);
++    if (useStateless) {
++        mDecoder = StatelessV4L2Decoder::Create(mDebugStreamId, *codec, minNumOutputBuffers,
++                                                std::move(getPoolCb), std::move(outputCb),
++                                                std::move(errorCb), mDecoderTaskRunner);
++    } else {
++        mDecoder = V4L2Decoder::Create(mDebugStreamId, *codec, inputBufferSize,
++                                       minNumOutputBuffers, std::move(getPoolCb),
++                                       std::move(outputCb), std::move(errorCb),
++                                       mDecoderTaskRunner, mIsSecure);
++    }
+     if (!mDecoder) {
+-        ALOGE("Failed to create V4L2Decoder for %s", VideoCodecToString(*codec));
++        ALOGE("Failed to create %s decoder for %s", useStateless ? "stateless" : "V4L2",
++              VideoCodecToString(*codec));
+         return;
+     }
+ 
+diff --git a/v4l2/V4L2Device.cpp b/v4l2/V4L2Device.cpp
+index bb020ba..34343e1 100644
+--- a/v4l2/V4L2Device.cpp
++++ b/v4l2/V4L2Device.cpp
+@@ -1582,6 +1582,22 @@ uint32_t V4L2Device::videoCodecToPixFmt(VideoCodec codec) {
+     }
+ }
+ 
++// static
++uint32_t V4L2Device::videoCodecToStatelessPixFmt(VideoCodec codec) {
++    switch (codec) {
++    case VideoCodec::H264:
++        return V4L2_PIX_FMT_H264_SLICE;
++    case VideoCodec::VP8:
++        return V4L2_PIX_FMT_VP8_FRAME;
++    case VideoCodec::VP9:
++        return V4L2_PIX_FMT_VP9_FRAME;
++    case VideoCodec::HEVC:
++        return V4L2_PIX_FMT_HEVC_SLICE;
++    case VideoCodec::AV1:
++        return V4L2_PIX_FMT_AV1_FRAME;
++    }
++}
++
+ std::vector<C2Config::level_t> V4L2Device::queryC2Levels(uint32_t pixFmt) {
+     auto getSupportedLevels = [this](VideoCodec codec, std::vector<C2Config::level_t>* levels) {
+         uint32_t queryId = 0;
+@@ -2368,12 +2384,30 @@ SupportedCapabilities V4L2Device::queryDecodingCapabilities(VideoCodec codec) {
+     caps.supportedLevels = V4L2Device::getSupportedDecodeLevels(codec);
+     caps.defaultLevel = V4L2Device::getDefaultLevel(codec);
+     caps.supportedProfiles = V4L2Device::getSupportedProfiles(
+-            V4L2Device::Type::kDecoder, {V4L2Device::videoCodecToPixFmt(codec)});
++            V4L2Device::Type::kDecoder, {V4L2Device::videoCodecToPixFmt(codec),
++                                         V4L2Device::videoCodecToStatelessPixFmt(codec)});
+     caps.defaultProfile = V4L2Device::getDefaultProfile(codec);
++    caps.copiesInput = V4L2Device::hasOnlyStatelessDecoder(codec);
+ 
+     return caps;
+ }
+ 
++// static
++bool V4L2Device::isPixFmtSupported(Type type, uint32_t pixFmt) {
++    for (const auto& info : getDeviceInfosForType(type)) {
++        if (std::find(info.second.begin(), info.second.end(), pixFmt) != info.second.end()) {
++            return true;
++        }
++    }
++    return false;
++}
++
++// static
++bool V4L2Device::hasOnlyStatelessDecoder(VideoCodec codec) {
++    return !isPixFmtSupported(Type::kDecoder, videoCodecToPixFmt(codec)) &&
++           isPixFmtSupported(Type::kDecoder, videoCodecToStatelessPixFmt(codec));
++}
++
+ // static
+ SupportedCapabilities V4L2Device::queryEncodingCapabilities(VideoCodec codec) {
+     SupportedCapabilities caps;
+diff --git a/v4l2/include/v4l2_codec2/v4l2/StatelessV4L2Decoder.h b/v4l2/include/v4l2_codec2/v4l2/StatelessV4L2Decoder.h
+new file mode 100644
+index 0000000..e42bfdb
+--- /dev/null
++++ b/v4l2/include/v4l2_codec2/v4l2/StatelessV4L2Decoder.h
+@@ -0,0 +1,137 @@
++// Copyright 2026 The LineageOS Project
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef ANDROID_V4L2_CODEC2_V4L2_STATELESS_V4L2_DECODER_H
++#define ANDROID_V4L2_CODEC2_V4L2_STATELESS_V4L2_DECODER_H
++
++#include <stdint.h>
++
++#include <deque>
++#include <map>
++#include <memory>
++#include <optional>
++#include <queue>
++
++#include <C2Buffer.h>
++#include <base/callback.h>
++#include <base/memory/weak_ptr.h>
++#include <base/sequenced_task_runner.h>
++#include <cros_codecs_ffi.h>
++#include <ui/Rect.h>
++#include <ui/Size.h>
++
++#include <v4l2_codec2/common/VideoTypes.h>
++#include <v4l2_codec2/components/VideoDecoder.h>
++#include <v4l2_codec2/components/VideoFrame.h>
++#include <v4l2_codec2/components/VideoFramePool.h>
++
++namespace android {
++
++// VideoDecoder for V4L2 stateless (request API) devices such as rkvdec and hantro. Bitstream
++// parsing and request submission are done by cros-codecs, which decodes directly into the
++// C2GraphicBlocks of the output pool (DMABUF import, no copy).
++// All methods must be called on |taskRunner|.
++class StatelessV4L2Decoder : public VideoDecoder {
++public:
++    static std::unique_ptr<VideoDecoder> Create(
++            uint32_t debugStreamId, VideoCodec codec, size_t minNumOutputBuffers,
++            GetPoolCB getPoolCb, OutputCB outputCb, ErrorCB errorCb,
++            scoped_refptr<::base::SequencedTaskRunner> taskRunner);
++    ~StatelessV4L2Decoder() override;
++
++    void decode(std::unique_ptr<ConstBitstreamBuffer> buffer, DecodeCB decodeCb) override;
++    void drain(DecodeCB drainCb) override;
++    void flush() override;
++
++private:
++    // A pending decode request, or a drain request if |buffer| is null.
++    struct DecodeRequest {
++        std::unique_ptr<ConstBitstreamBuffer> buffer;
++        DecodeCB decodeCb;
++        std::optional<C2ReadView> view;
++        size_t offset = 0;
++    };
++
++    // An output buffer referenced by cros-codecs. |frame| is null once it has been output.
++    struct FrameAtDecoder {
++        std::unique_ptr<VideoFrame> frame;
++        uint32_t blockId;
++        uint64_t poolGeneration;
++    };
++
++    struct PlaneLayouts {
++        uint32_t numPlanes = 0;
++        uint64_t offsets[CC_MAX_PLANES] = {};
++        uint64_t strides[CC_MAX_PLANES] = {};
++    };
++
++    StatelessV4L2Decoder(uint32_t debugStreamId, size_t minNumOutputBuffers, GetPoolCB getPoolCb,
++                         OutputCB outputCb, ErrorCB errorCb,
++                         scoped_refptr<::base::SequencedTaskRunner> taskRunner);
++    bool initialize(VideoCodec codec);
++
++    void schedulePump();
++    void pumpDecodeRequests();
++    // Handles all pending decoder events. Returns the number of events, or -1 on error.
++    int processEvents();
++    bool onFormatChanged(const CcEvent& event);
++    void onFrameReady(const CcEvent& event);
++
++    void tryFetchVideoFrame();
++    void onVideoFrameReady(uint64_t poolGeneration,
++                           std::optional<VideoFramePool::FrameWithBlockId> frameWithBlockId);
++    std::optional<PlaneLayouts> queryPlaneLayouts(const VideoFrame& frame) const;
++
++    // Called by cros-codecs, synchronously from inside the FFI calls.
++    bool allocFrame(CcFrameDesc* desc);
++    void releaseFrame(uint64_t token);
++    static bool AllocFrameThunk(void* ctx, CcFrameDesc* desc);
++    static void ReleaseFrameThunk(void* ctx, uint64_t token);
++
++    void onError();
++    void notifyError();
++
++    const uint32_t mDebugStreamId;
++    const size_t mMinNumOutputBuffers;
++    GetPoolCB mGetPoolCb;
++    OutputCB mOutputCb;
++    ErrorCB mErrorCb;
++    scoped_refptr<::base::SequencedTaskRunner> mTaskRunner;
++
++    ::CrosCodecsDecoder* mFfiDecoder = nullptr;
++
++    std::queue<DecodeRequest> mDecodeRequests;
++    bool mPumpScheduled = false;
++    // Number of available frames the pump waits for before retrying, 0 when not waiting. A single
++    // call may need several frames (e.g. the hidden and shown frames of a VP9 superframe), and
++    // cros-codecs gives back the frames it got when it runs short.
++    size_t mNumFramesNeeded = 0;
++    bool mDiscardOutput = false;
++    bool mError = false;
++
++    std::unique_ptr<VideoFramePool> mVideoFramePool;
++    uint64_t mPoolGeneration = 0;
++    bool mFetchPending = false;
++    ui::Size mCodedSize;
++    Rect mVisibleRect;
++    std::optional<PlaneLayouts> mPlaneLayouts;
++
++    // Frames fetched from the pool, ready to be handed to cros-codecs.
++    std::deque<VideoFramePool::FrameWithBlockId> mAvailableFrames;
++    // Frames the pool handed out again while cros-codecs still references their buffer, e.g. as a
++    // reference frame after the client returned the displayed block. Keyed by block ID.
++    std::map<uint32_t, std::unique_ptr<VideoFrame>> mDeferredFrames;
++    // Frames referenced by cros-codecs, keyed by token.
++    std::map<uint64_t, FrameAtDecoder> mFramesAtDecoder;
++    // Block IDs of the current pool referenced by cros-codecs, mapped to their token.
++    std::map<uint32_t, uint64_t> mBlockIdToToken;
++    uint64_t mNextToken = 1;
++
++    ::base::WeakPtr<StatelessV4L2Decoder> mWeakThis;
++    ::base::WeakPtrFactory<StatelessV4L2Decoder> mWeakThisFactory{this};
++};
++
++}  // namespace android
++
++#endif  // ANDROID_V4L2_CODEC2_V4L2_STATELESS_V4L2_DECODER_H
+diff --git a/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h b/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h
+index b243d47..4f82d55 100644
+--- a/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h
++++ b/v4l2/include/v4l2_codec2/v4l2/V4L2Device.h
+@@ -358,6 +358,8 @@ public:
+     static C2Config::level_t v4L2LevelToC2Level(VideoCodec codec, uint32_t level);
+     static C2Config::profile_t v4L2ProfileToC2Profile(VideoCodec codec, uint32_t profile);
+     static uint32_t videoCodecToPixFmt(VideoCodec codec);
++    // Returns the coded format of the V4L2 stateless (request API) decoder interface for |codec|.
++    static uint32_t videoCodecToStatelessPixFmt(VideoCodec codec);
+     // Calculates the largest plane's allocation size requested by a V4L2 device.
+     static ui::Size allocatedSizeFromV4L2Format(const struct v4l2_format& format);
+ 
+@@ -412,6 +414,12 @@ public:
+     // Gets all capabilites of the encoder devices.
+     static SupportedCapabilities queryEncodingCapabilities(VideoCodec codec);
+ 
++    // Returns whether any device of |type| accepts |pixFmt| as its coded format.
++    static bool isPixFmtSupported(Type type, uint32_t pixFmt);
++
++    // Returns whether |codec| can only be decoded through the stateless (request API) interface.
++    static bool hasOnlyStatelessDecoder(VideoCodec codec);
++
+     // Create and initialize an appropriate V4L2Device instance for the current platform, or return
+     // nullptr if not available.
+     static scoped_refptr<V4L2Device> create(uint32_t debugStreamId = -1);

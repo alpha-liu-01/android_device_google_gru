@@ -1,0 +1,77 @@
+diff --git a/cros_gralloc/cros_gralloc_driver.cc b/cros_gralloc/cros_gralloc_driver.cc
+index 047a39b..88a255f 100644
+--- a/cros_gralloc/cros_gralloc_driver.cc
++++ b/cros_gralloc/cros_gralloc_driver.cc
+@@ -217,6 +217,13 @@ bool cros_gralloc_driver::get_resolved_format_and_use_flags(
+ 		resolved_use_flags |= BO_USE_LINEAR;
+ 		combo = drv_get_combination(drv_.get(), resolved_format, resolved_use_flags);
+ 	}
++	if (!combo && (descriptor->droid_usage & GRALLOC_USAGE_HW_COMPOSER) &&
++	    (resolved_use_flags & BO_USE_SCANOUT)) {
++		// HWC can compose with the GPU instead of the display hardware, e.g. NV12 video
++		// frames on drivers without NV12 scanout.
++		resolved_use_flags &= ~BO_USE_SCANOUT;
++		combo = drv_get_combination(drv_.get(), resolved_format, resolved_use_flags);
++	}
+ 	if (!combo)
+ 		return false;
+ 
+diff --git a/drv_helpers.c b/drv_helpers.c
+index bfcb749..b93780f 100644
+--- a/drv_helpers.c
++++ b/drv_helpers.c
+@@ -368,6 +368,15 @@ int drv_dumb_bo_create_ex(struct bo *bo, uint32_t width, uint32_t height, uint32
+ 		break;
+ 	case DRM_FORMAT_YVU420:
+ 	case DRM_FORMAT_NV12:
++		/* Adjust the height to include room for chroma planes and rockchip
++		 * rkvdec motion vector storage (128 bytes per 16x16 macroblock). */
++		aligned_height = 3 * DIV_ROUND_UP(height, 2);
++		if (use_flags & BO_USE_HW_VIDEO_DECODER) {
++			uint32_t mv_bytes =
++			    128 * DIV_ROUND_UP(width, 16) * DIV_ROUND_UP(height, 16);
++			aligned_height += DIV_ROUND_UP(mv_bytes, ALIGN(width, 64));
++		}
++		break;
+ 	case DRM_FORMAT_NV21:
+ 	case DRM_FORMAT_P010:
+ 		/* Adjust the height to include room for chroma planes */
+@@ -382,8 +391,14 @@ int drv_dumb_bo_create_ex(struct bo *bo, uint32_t width, uint32_t height, uint32
+ 		    DIV_ROUND_UP(aligned_width * layout_from_format(format)->bytes_per_pixel[0], 4);
+ 		create_dumb.bpp = 32;
+ 	} else {
+-		/* Align for llvmpipe 64-byte tile size for dumb_driver */
+-		aligned_width = ALIGN(aligned_width, MESA_LLVMPIPE_TILE_SIZE);
++		/* Align for llvmpipe 64-byte tile size for dumb_driver, except
++		 * when allocating NV12 for V4L2 hardware video decoders which
++		 * require pitch == coded width (16-pixel macroblock aligned). */
++		if (format == DRM_FORMAT_NV12 && (use_flags & BO_USE_HW_VIDEO_DECODER)) {
++			aligned_width = ALIGN(aligned_width, 16);
++		} else {
++			aligned_width = ALIGN(aligned_width, MESA_LLVMPIPE_TILE_SIZE);
++		}
+ 		aligned_height = ALIGN(aligned_height, MESA_LLVMPIPE_TILE_SIZE);
+ 		create_dumb.bpp = layout_from_format(format)->bytes_per_pixel[0] * 8;
+ 	}
+diff --git a/dumb_driver.c b/dumb_driver.c
+index ee1026b..465b5a2 100644
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -49,6 +49,8 @@ static int dumb_driver_init(struct driver *drv)
+ 	drv_modify_combination(drv, DRM_FORMAT_NV12, &LINEAR_METADATA,
+ 			       BO_USE_HW_VIDEO_ENCODER | BO_USE_HW_VIDEO_DECODER |
+ 				   BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE);
++	drv_modify_combination(drv, DRM_FORMAT_YVU420_ANDROID, &LINEAR_METADATA,
++			       BO_USE_CAMERA_WRITE);
+ 	drv_modify_combination(drv, DRM_FORMAT_NV21, &LINEAR_METADATA, BO_USE_HW_VIDEO_ENCODER);
+ 
+ 	return drv_modify_linear_combinations(drv);
+@@ -59,7 +61,7 @@ static int dumb_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint32_t
+ {
+ 	for (uint32_t i = 0; i < count; i++) {
+ 		if (modifiers[i] == DRM_FORMAT_MOD_LINEAR) {
+-			return drv_dumb_bo_create(bo, width, height, format, 0);
++			return drv_dumb_bo_create(bo, width, height, format, bo->meta.use_flags);
+ 		}
+ 	}
+ 

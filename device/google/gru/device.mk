@@ -24,6 +24,9 @@ TARGET_DRM_HWCOMPOSER_VARIANT := aosp
 # The panel cannot be tapped yet. adb must not wait for a confirmation dialog.
 TARGET_HOSTAPD_AND_WPA_SUPPLICANT_FORM := legacy
 TARGET_USB_INIT_SCRIPT := none
+# Codec2 HAL for the rkvdec/hantro stateless decoders, backed by cros-codecs.
+TARGET_MEDIA_C2_HAL := v4l2_codec2
+TARGET_V4L2_CODEC2_USE_EXAMPLE_CONFIGURATION := false
 include device/mainline/common/optional/options.mk
 SUPPORTS_INLINE_KERNEL_BUILDING := false
 
@@ -92,6 +95,15 @@ PRODUCT_VENDOR_PROPERTIES += \
     debug.hwui.renderer=skiagl \
     ro.surface_flinger.supports_background_blur=0
 
+# Codec2 pool mask ION(16) | GRALLOC(17) | BUFFERQUEUE(18). v4l2_codec2 needs the bufferpool-backed
+# GRALLOC output pool in ByteBuffer mode; without bit 17 CCodec falls back to a basic pool.
+PRODUCT_VENDOR_PROPERTIES += \
+    ro.vendor.v4l2_codec2.decoder.supported.h264=true \
+    ro.vendor.v4l2_codec2.decoder.supported.vp8=true \
+    ro.vendor.v4l2_codec2.decoder.supported.vp9=true \
+    ro.vendor.v4l2_codec2.decode_concurrent_instances=8 \
+    debug.stagefright.c2-poolmask=0x70000
+
 FORCE_USE_ANDROIDMK_FOR_WPA_CONF := true
 PRODUCT_PACKAGES += \
     hwservicemanager \
@@ -116,6 +128,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/wpa_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/wpa_supplicant_overlay.conf \
     $(LOCAL_PATH)/p2p_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/p2p_supplicant_overlay.conf \
     $(LOCAL_PATH)/etc/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
+    $(LOCAL_PATH)/etc/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
     frameworks/av/services/audiopolicy/config/audio_policy_volumes.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_volumes.xml \
     frameworks/av/services/audiopolicy/config/bluetooth_audio_policy_configuration_7_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/bluetooth_audio_policy_configuration_7_0.xml \
     frameworks/av/services/audiopolicy/config/bluetooth_with_le_audio_policy_configuration_7_0.xml:$(TARGET_COPY_OUT_VENDOR)/etc/bluetooth_with_le_audio_policy_configuration_7_0.xml \

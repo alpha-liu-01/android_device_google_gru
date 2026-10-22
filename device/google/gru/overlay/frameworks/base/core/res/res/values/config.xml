@@ -80,4 +80,12 @@
     <bool name="config_isDesktopModeDevOptionSupported">true</bool>
     <bool name="config_canInternalDisplayHostDesktops">true</bool>
 
+    <!--
+        The DSI mode is 60.01552 Hz. SurfaceFlinger treats a frame rate as
+        inside the render range only when it is within 0.001 Hz, so a cap of
+        exactly 60 excludes the real mode and leaves only the /2 divisor
+        (30.01 Hz). 61 keeps 60.02 Hz inside the default render vote.
+    -->
+    <integer name="config_defaultRefreshRate">61</integer>
+
 </resources>

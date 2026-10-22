@@ -5,6 +5,7 @@
 | 编号 | 状态 | 现象 |
 | :--- | :--- | :--- |
 | 1 | 已在本次启动中验证，重启后要靠新的 `vendor` 镜像才保留 | 睡眠唤醒后内置扬声器没声音 |
+| 2 | 已修复，2026-10-22 实机验证 | 滑动被锁在 30 fps |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -19,3 +20,18 @@
   2. 先停 `XFER` 再清 FIFO，轮询放宽到 5 ms。超时只打警告，不再让 DAI trigger 失败。BCLK 引脚改到清 FIFO 之后再切成 GPIO。resume 时写一次 `I2S_CLR = 0`，清掉已经卡住的清除位。
 - **实机**：新模块载入后，`suspend_stats/success` 从 2 增到 3 的那次唤醒之后，连续两次 `tinyplay2` 都是 **3.05 秒 / 3.04 秒**，没有新的 `fail to clear`。当前这次启动已经在用新模块，可以直接再睡一次试喇叭。重启后要靠下面这份镜像，旧的 `/vendor/lib/snd-soc-rockchip-i2s.ko` 还是坏的。
 - **新发布包**：`lineage-23.2-gru-20261021.zip`，`1,038,695,940` 字节，SHA-256 `37e69acbed7bc32b9242e76e3a38404672e9961708456e907e7157da4a27c61d`。
+
+## 2. 滑动被锁在 30 fps
+
+- **现象**：设置这类普通二维界面滑动也只有大约 30–45 fps。CPU、GPU、内存控制器的频率已经拉满，Panfrost 也在做硬件渲染。
+- **原因**：面板时序是 `1536x2048 @ 229 MHz`，实际刷新率 **60.01552 Hz**。`config_defaultRefreshRate` 原来是整数 **60**，DisplayModeDirector 把渲染区间投票成 `[0, 60.00]`。SurfaceFlinger 判定帧率是否落在区间内的容差只有 **0.001 Hz**，`60.02` 被排除，只剩下整除得到的 **30.01 Hz**。触摸加速选的是区间里的最高值，所以滑动也出不了 30 fps。
+- **修复前（2026-10-22 凌晨，`dumpsys SurfaceFlinger`）**：
+  - `render=[0.00 Hz, 60.00 Hz]`，`renderRate=30.01 Hz`，`app duration=33.32 ms`。
+  - 开机后 `60.02 Hz` 只累计了 **29.250 秒**，其余 **1 小时 18 分钟**都在 `30.01 Hz`。一次 2 秒滑动更新了 PowerManager 的 interaction boost，60 Hz 累计时间没有增加。
+  - `dumpsys gfxinfo com.android.settings`：帧时间中位数 **22 ms**，GPU 中位数 **7 ms**。相对 33 ms 的 deadline 只有 **4.14%** 掉帧。
+- **修复**：`device/google/gru/overlay/frameworks/base/core/res/res/values/config.xml` 把 `config_defaultRefreshRate` 设为 **61**。这个值打进 vendor 静态 overlay `framework-res__lineage_gru__auto_generated_rro_vendor.apk`，随 `super` 分区刷入。镜像 `/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,412,180` 字节，SHA-256 `d72d0824edbcc7f62b44dcc739a4fef38d31e93fd96581e07ef9345421f786e8`。
+- **实机（同一台，`10.0.0.110`，2026-10-22，设置停留在前台）**：
+  - `mDefaultRefreshRate=61.0`，`render=[0.00 Hz, 61.00 Hz]`，`renderRate=60.02 Hz`，`presDeadline=16.66 ms`，`app duration=16.66 ms`。
+  - 这次开机亮屏 **5 分 52 秒**全部记在 `60.02 Hz`，没有 `30.01 Hz` 这一档。
+  - 设置的 `gfxinfo`：帧时间中位数 **17 ms**，90 分位 **34 ms**，相对 16.6 ms deadline 掉帧 **10.56%**（2624 帧里 277 帧）。GPU 中位数 **3 ms**，90 分位 **9 ms**。
+- **还没解决的掉帧**：图层仍全部是 `CLIENT` + `ROT_90`，合成效率大约 **1.4%**。VOP 不能做 90° 旋转，buffer 仍是未压缩线性格式。设置的中位数已经落在一帧以内，更重的界面和动画仍会越过 16.6 ms，视觉上继续掉帧。这是剩下的合成路径问题，不是这次的 30 fps 锁。

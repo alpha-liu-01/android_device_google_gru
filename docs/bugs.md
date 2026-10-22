@@ -19,7 +19,7 @@
   1. `runtime_resume` 里先把 mclk 设成一半再设回原来的速率，强迫 CRU 重新锁存；同时 `disable`/`enable` 一次，把被 S3 复位的门控写回去。设备如果休眠时还处于 runtime active，走 `SET_SYSTEM_SLEEP_PM_OPS` 的 resume 做同样的事。
   2. 先停 `XFER` 再清 FIFO，轮询放宽到 5 ms。超时只打警告，不再让 DAI trigger 失败。BCLK 引脚改到清 FIFO 之后再切成 GPIO。resume 时写一次 `I2S_CLR = 0`，清掉已经卡住的清除位。
 - **实机**：新模块载入后，`suspend_stats/success` 从 2 增到 3 的那次唤醒之后，连续两次 `tinyplay2` 都是 **3.05 秒 / 3.04 秒**，没有新的 `fail to clear`。当前这次启动已经在用新模块，可以直接再睡一次试喇叭。重启后要靠下面这份镜像，旧的 `/vendor/lib/snd-soc-rockchip-i2s.ko` 还是坏的。
-- **新发布包**：`lineage-23.2-gru-20261021.zip`，`1,038,695,940` 字节，SHA-256 `37e69acbed7bc32b9242e76e3a38404672e9961708456e907e7157da4a27c61d`。
+- **新发布包**：`lineage-23.2-gru-20261022.zip`，`1,038,696,275` 字节，SHA-256 `00c03b5ac10bd3a9d55d47f943e24c1bde627d671a87742afef027c680feef1f`。里面的 `super` 是实机验证过的 `d42fde74ce7b878b92c39c313a36809d9de80e3178e4b5d15c3621ee4ae01924`（61 Hz、大 VOP、AFBC，以及这次的扬声器修复）。
 
 ## 2. 滑动被锁在 30 fps
 

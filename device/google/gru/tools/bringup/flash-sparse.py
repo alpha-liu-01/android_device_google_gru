@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Write an Android sparse image to one block device."""
+"""Write an Android sparse image to the external microSD super partition."""
 import os
+import re
 import struct
 import sys
 
@@ -8,14 +9,25 @@ RAW = 0xCAC1
 FILL = 0xCAC2
 DONT = 0xCAC3
 CRC = 0xCAC4
+SD_CTRL = "fe320000.mmc"
+EMMC_CTRL = "fe330000"
+
+
+def refuse_unless_external_sd(device):
+    name = os.path.basename(os.path.realpath(device))
+    match = re.match(r"(mmcblk\d+)p\d+$", name)
+    if not match:
+        raise SystemExit("refuse device " + device)
+    sysfs = os.path.realpath("/sys/class/block/%s/device" % match.group(1))
+    if EMMC_CTRL in sysfs or SD_CTRL not in sysfs:
+        raise SystemExit("refuse device %s (%s)" % (device, sysfs))
 
 
 def main():
     if len(sys.argv) != 3:
         raise SystemExit("usage: flash-sparse.py IMAGE DEVICE")
     image, device = sys.argv[1:]
-    if device != "/dev/mmcblk0p6":
-        raise SystemExit("refuse device " + device)
+    refuse_unless_external_sd(device)
     with open(image, "rb") as src:
         header = src.read(28)
         if len(header) != 28:

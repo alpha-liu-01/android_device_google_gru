@@ -1,0 +1,86 @@
+diff --git a/drm/DrmDisplayPipeline.cpp b/drm/DrmDisplayPipeline.cpp
+index 0bf6205..62c246b 100644
+--- a/drm/DrmDisplayPipeline.cpp
++++ b/drm/DrmDisplayPipeline.cpp
+@@ -18,6 +18,8 @@
+ 
+ #include "DrmDisplayPipeline.h"
+ 
++#include <string>
++
+ #include "DrmAtomicStateManager.h"
+ #include "DrmConnector.h"
+ #include "DrmCrtc.h"
+@@ -107,9 +109,43 @@ static auto TryCreatePipeline(DrmDevice &dev, DrmConnector &connector,
+   return pipe;
+ }
+ 
++static int CountPlanesForCrtc(DrmDevice &dev, const DrmCrtc &crtc) {
++  int count = 0;
++  for (const auto &plane : dev.GetPlanes()) {
++    if (plane->IsCrtcSupported(crtc))
++      ++count;
++  }
++  return count;
++}
++
+ static auto TryCreatePipelineUsingEncoder(DrmDevice &dev, DrmConnector &conn,
+                                           DrmEncoder &enc)
+     -> std::unique_ptr<DrmDisplayPipeline> {
++  /* The panel is wired to both VOPs. The little one is bound first and cannot
++   * scan AFBC, so an AFBC framebuffer commit fails with EINVAL and the panel
++   * stays black. Pick the CRTC with the most planes for DSI. */
++  if (Properties::PreferWideCrtc() &&
++      conn.GetName().find("DSI") != std::string::npos) {
++    DrmCrtc *best = nullptr;
++    int best_planes = -1;
++    for (const auto &crtc : dev.GetCrtcs()) {
++      if (!enc.SupportsCrtc(*crtc))
++        continue;
++      int planes = CountPlanesForCrtc(dev, *crtc);
++      if (planes > best_planes) {
++        best = crtc.get();
++        best_planes = planes;
++      }
++    }
++    if (best != nullptr) {
++      ALOGI("Preferring CRTC %d (%d planes) for %s", best->GetId(), best_planes,
++            conn.GetName().c_str());
++      auto pipeline = TryCreatePipeline(dev, conn, enc, *best);
++      if (pipeline)
++        return pipeline;
++    }
++  }
++
+   /* First try to use the currently-bound crtc */
+   auto *crtc = dev.FindCrtcById(enc.GetCurrentCrtcId());
+   if (crtc != nullptr) {
+diff --git a/utils/properties.cpp b/utils/properties.cpp
+index 5a874c5..e233171 100644
+--- a/utils/properties.cpp
++++ b/utils/properties.cpp
+@@ -136,6 +136,10 @@ auto Properties::GetBackendOverride() -> std::string {
+   return {backend_override};
+ }
+ 
++auto Properties::PreferWideCrtc() -> bool {
++  return (property_get_bool("vendor.hwc.drm.prefer_wide_crtc", 1) != 0);
++}
++
+ auto Properties::GetDevicePath() -> std::string {
+   char path_pattern[PROPERTY_VALUE_MAX];
+   // Could be a valid path or it can have at the end of it the wildcard %
+diff --git a/utils/properties.h b/utils/properties.h
+index e127761..56360d7 100644
+--- a/utils/properties.h
++++ b/utils/properties.h
+@@ -36,6 +36,9 @@ class Properties {
+   static auto GetCtmHandling() -> CtmHandling;
+   static auto GetBackendOverride() -> std::string;
+   static auto GetDevicePath() -> std::string;
++  /* RK3399's little VOP cannot scan AFBC. Prefer the CRTC with more planes
++   * (the big VOP) for the internal DSI panel. */
++  static auto PreferWideCrtc() -> bool;
+ };
+ 
+ }  // namespace android

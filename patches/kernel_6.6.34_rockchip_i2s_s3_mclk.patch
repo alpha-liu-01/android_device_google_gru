@@ -1,0 +1,211 @@
+--- a/sound/soc/rockchip/rockchip_i2s.c
++++ b/sound/soc/rockchip/rockchip_i2s.c
+@@ -87,6 +87,33 @@
+ 	return ret;
+ }
+ 
++/*
++ * S3 resets the CRU fractional divider latch. The register still reads back
++ * the old numerator/denominator and the clk core still reports 12.288 MHz,
++ * but the hardware falls back to parent/20 (80 MHz). clk_set_rate() of the
++ * cached rate is a no-op, so step away and back. Also drop the enable count
++ * across that, because a CRU gate reset leaves the gate disabled while the
++ * enable count stays non-zero.
++ */
++static int rockchip_i2s_sync_mclk(struct rk_i2s_dev *i2s)
++{
++	unsigned long rate = clk_get_rate(i2s->mclk);
++	int ret = 0;
++
++	if (!rate)
++		return 0;
++
++	clk_disable_unprepare(i2s->mclk);
++	ret = clk_set_rate(i2s->mclk, rate / 2);
++	if (!ret)
++		ret = clk_set_rate(i2s->mclk, rate);
++	clk_prepare_enable(i2s->mclk);
++	if (ret)
++		dev_err(i2s->dev, "failed to reprogram mclk: %d\n", ret);
++
++	return ret;
++}
++
+ static int i2s_runtime_suspend(struct device *dev)
+ {
+ 	struct rk_i2s_dev *i2s = dev_get_drvdata(dev);
+@@ -112,10 +139,25 @@
+ 	regcache_mark_dirty(i2s->regmap);
+ 
+ 	ret = regcache_sync(i2s->regmap);
+-	if (ret)
++	if (ret) {
+ 		clk_disable_unprepare(i2s->mclk);
++		return ret;
++	}
+ 
+-	return ret;
++	regmap_write(i2s->regmap, I2S_CLR, 0);
++
++	return rockchip_i2s_sync_mclk(i2s);
++}
++
++static int i2s_system_resume(struct device *dev)
++{
++	struct rk_i2s_dev *i2s = dev_get_drvdata(dev);
++
++	/* Already runtime-suspended: the next PCM open resumes and syncs. */
++	if (pm_runtime_status_suspended(dev))
++		return 0;
++
++	return rockchip_i2s_sync_mclk(i2s);
+ }
+ 
+ static inline struct rk_i2s_dev *to_info(struct snd_soc_dai *dai)
+@@ -123,9 +165,45 @@
+ 	return snd_soc_dai_get_drvdata(dai);
+ }
+ 
+-static int rockchip_snd_txctrl(struct rk_i2s_dev *i2s, int on)
++/*
++ * Stop XFER, then clear the FIFOs. The clear bit self-clears once mclk
++ * has produced a few cycles. After S3 that can take longer than the
++ * upstream 200us poll, and a failed STOP used to abort the DAI trigger
++ * so every later open stayed silent. Keep going after a timeout.
++ */
++static int rockchip_i2s_clear(struct rk_i2s_dev *i2s)
+ {
+ 	unsigned int val = 0;
++	int ret;
++
++	/* A stuck CLR (left behind when mclk was absent) blocks XFER. */
++	regmap_write(i2s->regmap, I2S_CLR, 0);
++
++	ret = regmap_update_bits(i2s->regmap, I2S_XFER,
++				 I2S_XFER_TXS_START | I2S_XFER_RXS_START,
++				 I2S_XFER_TXS_STOP | I2S_XFER_RXS_STOP);
++	if (ret < 0)
++		return ret;
++	udelay(150);
++	ret = regmap_update_bits(i2s->regmap, I2S_CLR,
++				 I2S_CLR_TXC | I2S_CLR_RXC,
++				 I2S_CLR_TXC | I2S_CLR_RXC);
++	if (ret < 0)
++		return ret;
++	/* 200us is not enough if mclk was just re-enabled after S3. */
++	ret = regmap_read_poll_timeout_atomic(i2s->regmap, I2S_CLR, val,
++					      val == 0, 20, 5000);
++	if (ret)
++		dev_warn(i2s->dev, "fail to clear: %d\n", ret);
++	/*
++	 * Returning the timeout used to fail the DAI trigger and left every
++	 * later open unusable. The FIFO clear is best-effort.
++	 */
++	return 0;
++}
++
++static int rockchip_snd_txctrl(struct rk_i2s_dev *i2s, int on)
++{
+ 	int ret = 0;
+ 
+ 	spin_lock(&i2s->lock);
+@@ -150,27 +228,8 @@
+ 		if (ret < 0)
+ 			goto end;
+ 
+-		if (!i2s->rx_start) {
+-			ret = regmap_update_bits(i2s->regmap, I2S_XFER,
+-						 I2S_XFER_TXS_START | I2S_XFER_RXS_START,
+-						 I2S_XFER_TXS_STOP | I2S_XFER_RXS_STOP);
+-			if (ret < 0)
+-				goto end;
+-			udelay(150);
+-			ret = regmap_update_bits(i2s->regmap, I2S_CLR,
+-						 I2S_CLR_TXC | I2S_CLR_RXC,
+-						 I2S_CLR_TXC | I2S_CLR_RXC);
+-			if (ret < 0)
+-				goto end;
+-			ret = regmap_read_poll_timeout_atomic(i2s->regmap,
+-							      I2S_CLR,
+-							      val,
+-							      val == 0,
+-							      20,
+-							      200);
+-			if (ret < 0)
+-				dev_warn(i2s->dev, "fail to clear: %d\n", ret);
+-		}
++		if (!i2s->rx_start)
++			ret = rockchip_i2s_clear(i2s);
+ 	}
+ end:
+ 	spin_unlock(&i2s->lock);
+@@ -182,7 +241,6 @@
+ 
+ static int rockchip_snd_rxctrl(struct rk_i2s_dev *i2s, int on)
+ {
+-	unsigned int val = 0;
+ 	int ret = 0;
+ 
+ 	spin_lock(&i2s->lock);
+@@ -208,27 +266,8 @@
+ 		if (ret < 0)
+ 			goto end;
+ 
+-		if (!i2s->tx_start) {
+-			ret = regmap_update_bits(i2s->regmap, I2S_XFER,
+-						 I2S_XFER_TXS_START | I2S_XFER_RXS_START,
+-						 I2S_XFER_TXS_STOP | I2S_XFER_RXS_STOP);
+-			if (ret < 0)
+-				goto end;
+-			udelay(150);
+-			ret = regmap_update_bits(i2s->regmap, I2S_CLR,
+-						 I2S_CLR_TXC | I2S_CLR_RXC,
+-						 I2S_CLR_TXC | I2S_CLR_RXC);
+-			if (ret < 0)
+-				goto end;
+-			ret = regmap_read_poll_timeout_atomic(i2s->regmap,
+-							      I2S_CLR,
+-							      val,
+-							      val == 0,
+-							      20,
+-							      200);
+-			if (ret < 0)
+-				dev_warn(i2s->dev, "fail to clear: %d\n", ret);
+-		}
++		if (!i2s->tx_start)
++			ret = rockchip_i2s_clear(i2s);
+ 	}
+ end:
+ 	spin_unlock(&i2s->lock);
+@@ -483,15 +522,13 @@
+ 	case SNDRV_PCM_TRIGGER_SUSPEND:
+ 	case SNDRV_PCM_TRIGGER_STOP:
+ 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+-		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
+-			if (!i2s->tx_start)
+-				i2s_pinctrl_select_bclk_off(i2s);
++		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE)
+ 			ret = rockchip_snd_rxctrl(i2s, 0);
+-		} else {
+-			if (!i2s->rx_start)
+-				i2s_pinctrl_select_bclk_off(i2s);
++		else
+ 			ret = rockchip_snd_txctrl(i2s, 0);
+-		}
++		/* Mux BCLK off only after the FIFO clear, which needs SCLK. */
++		if (!ret && !i2s->tx_start && !i2s->rx_start)
++			i2s_pinctrl_select_bclk_off(i2s);
+ 		break;
+ 	default:
+ 		ret = -EINVAL;
+@@ -863,8 +900,8 @@
+ }
+ 
+ static const struct dev_pm_ops rockchip_i2s_pm_ops = {
+-	SET_RUNTIME_PM_OPS(i2s_runtime_suspend, i2s_runtime_resume,
+-			   NULL)
++	SET_RUNTIME_PM_OPS(i2s_runtime_suspend, i2s_runtime_resume, NULL)
++	SET_SYSTEM_SLEEP_PM_OPS(NULL, i2s_system_resume)
+ };
+ 
+ static struct platform_driver rockchip_i2s_driver = {

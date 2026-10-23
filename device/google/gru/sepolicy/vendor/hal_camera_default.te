@@ -1,0 +1,2 @@
+allow hal_camera_default sysfs_v4l:dir r_dir_perms;
+allow hal_camera_default sysfs_v4l:file r_file_perms;

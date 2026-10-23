@@ -1,8 +1,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <poll.h>
-#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -244,25 +242,6 @@ static void drain_kmsg(int kmsg) {
     }
 }
 
-static void keeper(int kmsg) {
-    struct sched_param param;
-    param.sched_priority = 50;
-    sched_setscheduler(0, SCHED_FIFO, &param);
-    for (;;) {
-        struct pollfd pollfd;
-        if (kmsg < 0 || log_fd < 0) {
-            sleep(1);
-            continue;
-        }
-        pollfd.fd = kmsg;
-        pollfd.events = POLLIN;
-        if (poll(&pollfd, 1, 200) > 0) {
-            drain_kmsg(kmsg);
-            fsync(log_fd);
-        }
-    }
-}
-
 static void handoff_watchdog_to_kernel(int *watchdog) {
     if (*watchdog < 0) {
         return;
@@ -287,8 +266,6 @@ int main(int argc, char **argv) {
     int super_err = ENODEV;
     char super_node[288];
     char line[64];
-    pid_t child;
-
     mkdir("/dev", 0755);
     mknod("/dev/kmsg", S_IFCHR | 0600, makedev(1, 11));
     kmsg = open("/dev/kmsg", O_RDWR | O_NONBLOCK);
@@ -368,31 +345,23 @@ int main(int argc, char **argv) {
 
     log_text("android_starting\n");
     handoff_watchdog_to_kernel(&watchdog);
-    if (log_fd >= 0) {
-        fsync(log_fd);
-    }
-    sync();
-    child = fork();
-    if (child == 0) {
-        keeper(kmsg);
-        _exit(0);
-    }
     /* /system is read-only erofs and has no gru-proc, gru-sys, or bootlog.
        SwitchRoot moves every mount onto it and fatals if the directory is
-       missing. Detach these after the log fd is open. The keeper keeps
-       writing through that fd. */
+       missing. Detach while the log fd is still open, then close it.
+       Nothing keeps reading kmsg after this. */
     log_err("detach_bootlog", umount2("/bootlog", MNT_DETACH) == 0 ? 0 : errno);
     log_err("detach_gru_proc", umount2("/gru-proc", MNT_DETACH) == 0 ? 0 : errno);
     log_err("detach_gru_sys", umount2("/gru-sys", MNT_DETACH) == 0 ? 0 : errno);
     if (log_fd >= 0) {
         fsync(log_fd);
+        close(log_fd);
+        log_fd = -1;
     }
     if (kmsg >= 0) {
         close(kmsg);
+        kmsg = -1;
     }
-    if (log_fd >= 0) {
-        close(log_fd);
-    }
+    sync();
     argv[0] = "/init.android";
     execv("/init.android", argv);
     log_fd = open(LOG_PATH, O_WRONLY | O_APPEND | O_SYNC, 0644);

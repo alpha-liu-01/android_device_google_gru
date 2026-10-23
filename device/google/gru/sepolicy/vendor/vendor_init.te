@@ -1,0 +1,15 @@
+# post-fs chown/chmod of the IIO sysfs nodes runs in this domain.
+allow vendor_init vendor_sysfs_iio:dir r_dir_perms;
+allow vendor_init vendor_sysfs_iio:file { getattr open read setattr };
+
+# early-init insmod of /vendor/lib/*.ko runs here. Without sys_module the
+# finit_module calls return EPERM and panfrost never comes up, so
+# surfaceflinger aborts before the panel backlight is turned on.
+allow vendor_init self:global_capability_class_set sys_module;
+allow vendor_init vendor_file:system module_load;
+allow vendor_init kernel:key search;
+
+set_prop(vendor_init, vendor_minigbm_prop)
+
+# init.gru.rc lowers printk after boot. The node is unlabeled proc.
+allow vendor_init proc:file { getattr open write };

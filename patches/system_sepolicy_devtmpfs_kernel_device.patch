@@ -1,0 +1,19 @@
+diff --git a/private/coredomain.te b/private/coredomain.te
+index 2163c51..f5b510b 100644
+--- a/private/coredomain.te
++++ b/private/coredomain.te
+@@ -158,11 +158,14 @@ full_treble_only(`
+   } sysfs:file no_rw_file_perms;
+ 
+   # /dev
++  # kernel is exempt because this 6.6 kernel uses devtmpfs. kdevtmpfs creates
++  # loop and dm nodes after the policy is loaded; ueventd restorecon relabels them.
+   neverallow {
+     coredomain
+     -apexd
+     -fsck
+     -init
++    -kernel
+     -ueventd
+   } device:{ blk_file file } no_rw_file_perms;
+ 

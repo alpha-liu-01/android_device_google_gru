@@ -1,0 +1,48 @@
+diff --git a/private/coredomain.te b/private/coredomain.te
+index f5b510b..7c1a2e4 100644
+--- a/private/coredomain.te
++++ b/private/coredomain.te
+@@ -147,15 +147,28 @@ full_treble_only(`
+     -vold
+   } proc:file no_rw_file_perms;
+ 
+-  # /sys
++  # /sys
++  # libdrm in surfaceflinger reads .../display-subsystem/uevent. That inode
++  # is created before the policy is loaded and stays type sysfs, so the
++  # genfscon for sysfs_gpu does not apply to it. Read stays allowed for
++  # surfaceflinger. Write does not.
+   neverallow {
+     coredomain
+     -apexd
+     -init
+     -ueventd
+     is_flag_enabled(RELEASE_AVF_ENABLE_DEVICE_ASSIGNMENT, `-vfio_handler')
+     -vold
+-  } sysfs:file no_rw_file_perms;
++  } sysfs:file no_w_file_perms;
++  neverallow {
++    coredomain
++    -apexd
++    -init
++    -ueventd
++    -surfaceflinger
++    is_flag_enabled(RELEASE_AVF_ENABLE_DEVICE_ASSIGNMENT, `-vfio_handler')
++    -vold
++  } sysfs:file { open read ioctl lock watch watch_mount watch_sb watch_with_perm watch_reads };
+ 
+   # /dev
+   # kernel is exempt because this 6.6 kernel uses devtmpfs. kdevtmpfs creates
+diff --git a/private/surfaceflinger.te b/private/surfaceflinger.te
+index 4a0c2c1..b7e91aa 100644
+--- a/private/surfaceflinger.te
++++ b/private/surfaceflinger.te
+@@ -40,6 +40,8 @@ r_dir_file(surfaceflinger, appdomain)
+ allow surfaceflinger gpu_device:chr_file rw_file_perms;
+ allow surfaceflinger gpu_device:dir r_dir_perms;
+ allow surfaceflinger sysfs_gpu:file r_file_perms;
++# display-subsystem/uevent is type sysfs. See coredomain.te.
++allow surfaceflinger sysfs:file r_file_perms;
+ 
+ # Access /dev/graphics/fb0.
+ allow surfaceflinger graphics_device:dir search;

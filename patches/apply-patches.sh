@@ -82,6 +82,8 @@ LINEAGE_PATCH_MAP=(
     "system/core:system_core_healthd_battery_monitor.patch"
     "system/core:system_core_libcutils_memfd_isolated_app.patch"
     "system/cros-codecs:system_cros-codecs_v4l2_stateless_fixes_and_ffi.patch"
+    "system/sepolicy:system_sepolicy_devtmpfs_kernel_device.patch"
+    "system/sepolicy:system_sepolicy_surfaceflinger_sysfs_uevent.patch"
 )
 
 for entry in "${LINEAGE_PATCH_MAP[@]}"; do

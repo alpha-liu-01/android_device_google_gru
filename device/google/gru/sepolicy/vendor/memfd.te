@@ -1,0 +1,16 @@
+# libcutils memfds are born as tmpfs and then relabeled. These domains write
+# or map the fd before that relabel, or receive another domain's tmpfs.
+allow {
+    hal_audio_default
+    hal_power_default
+    hal_sensors_default
+    mediaswcodec
+    mediacodec
+    audioserver
+    system_server
+    platform_app
+} tmpfs:file { read write map };
+
+allow { mediaswcodec mediacodec } appdomain_tmpfs:file { read write map };
+allow { mediaswcodec audioserver hal_sensors_default } system_server_tmpfs:file { read write map };
+allow system_server audioserver_tmpfs:file { read write map };

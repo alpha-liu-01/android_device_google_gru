@@ -182,13 +182,14 @@ on zygote-start
 on boot && property:service.adb.tcp.port=5555
     start adbd
 
-# Console loglevel 7 would paint kernel warnings back onto the panel if
-# fbcon is still bound. kmsg itself is unchanged.
+# Drop the console to warnings after the UI is up. The cmdline starts at 4.
 on property:sys.boot_completed=1
-    exec_background - root root -- /system/bin/pm enable com.android.bluetooth
+    # /system/bin/sh is shell_exec and transitions to shell. The tools themselves
+    # are system_file, which init is not allowed to execute in its own domain.
+    exec_background - root root -- /system/bin/sh -c "/system/bin/pm enable com.android.bluetooth"
     exec_background - root root -- /system/bin/sh /vendor/bin/boot_settings.sh
-    exec_background - root root -- /system/bin/settings put secure show_ime_with_hard_keyboard 1
-    exec_background - root root -- /system/bin/settings put global override_desktop_experience_features 1
+    exec_background - root root -- /system/bin/sh -c "/system/bin/settings put secure show_ime_with_hard_keyboard 1"
+    exec_background - root root -- /system/bin/sh -c "/system/bin/settings put global override_desktop_experience_features 1"
     exec_background - root audio -- /system/bin/tinymix2 -D 0 set "Out DAIR Mux" 0
     write /proc/sys/kernel/printk "3 4 1 3"
 
@@ -208,18 +209,9 @@ service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
     oneshot
     user root
 
-service expand_userdata /system/bin/sh /vendor/bin/expand_userdata.sh
+service expand_userdata /vendor/bin/expand_userdata.sh
     class core
     user root
     group root system
     disabled
     oneshot
-    seclabel u:r:init:s0
-
-# system_server's Java exception never reaches kmsg by itself. The script
-# keeps a copy on /data and mirrors the same lines to kmsg one at a time.
-service gru_logcat /system/bin/sh /vendor/bin/gru-logcat.sh
-    class core
-    user root
-    group root system log readproc
-    seclabel u:r:init:s0

@@ -1,0 +1,2 @@
+# Mainline policy only grants read on the backlight class symlink.
+allow hal_light_default vendor_sysfs_backlight:file rw_file_perms;

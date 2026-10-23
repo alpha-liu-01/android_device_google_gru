@@ -49,6 +49,11 @@ PRODUCT_SOONG_NAMESPACES += \
 
 PRODUCT_CHARACTERISTICS := tablet
 
+# vendor init cannot set this system property once SELinux is enforcing.
+# libcutils reads it to use memfd instead of /dev/ashmem.
+PRODUCT_SYSTEM_PROPERTIES += \
+    sys.use_memfd=true
+
 # The panel cannot be tapped yet. adb must not wait for a confirmation dialog.
 PRODUCT_PRODUCT_PROPERTIES += \
     ro.adb.secure=0 \
@@ -174,7 +179,6 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/ueventd.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.gru.rc \
     $(LOCAL_PATH)/scripts/expand_userdata.sh:$(TARGET_COPY_OUT_VENDOR)/bin/expand_userdata.sh \
     $(LOCAL_PATH)/scripts/boot_settings.sh:$(TARGET_COPY_OUT_VENDOR)/bin/boot_settings.sh \
-    $(LOCAL_PATH)/gru-logcat.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gru-logcat.sh \
     $(LOCAL_PATH)/firmware/rockchip/dptx.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/rockchip/dptx.bin \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board-2.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board-2.bin \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board.bin \

@@ -10,7 +10,8 @@
 | 4 | 已修复，2026-10-23 实机验证 | USB-C 接显示器或电视时，画面正常，声音仍从内置扬声器出来 |
 | 5 | 已修复，2026-10-23 实机验证 | 每次开机后「设置 → 显示 → 自动熄屏」变成未设置 |
 | 6 | 已修复，2026-10-23 实机验证 | 开机没有 LineageOS 标志，先黑屏无背光，再黑屏有背光 |
-| 7 | 修复已打进 super，下次播放才能验证 | 720p 竖屏（720×1280）硬解画面全是横线和竖线 |
+| 7 | 已修复，2026-10-23 实机验证 | 720p 竖屏（720×1280）硬解画面全是横线和竖线 |
+| 8 | 已修复，2026-10-23 实机验证 | SELinux 停在 permissive |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -99,4 +100,35 @@
 - **现场（2026-10-23 11:53，`10.0.0.114:5555`，正在播这段视频）**：`StatelessV4L2Decoder` 打出 `Format changed: coded 720x1280, visible (0,0)-(720,1280)`，接着 `Output buffer layout: Y offset 0 stride 768, UV offset 983040 stride 768`。`983040 = 768 × 1280`。CCodec 的 `raw.size` 和 `raw.crop` 都是 720×1280。
 - **原因**：`rkvdec-h264.c` 的 `hor_virstride` 是 `(bit_depth + 8) × width / 8`。8-bit、宽 720 时跨距是 **720**，UV 从 `720 × 1280 = 921600` 开始写。分配器走 dumb 缓冲，`rockchip_gem_dumb_create` 把 pitch 对齐到 64 字节，720 变成 **768**，gralloc 把这个 pitch 报成平面跨距。合成器按 768 读、硬件按 720 写，每一行错 48 字节，整帧就散成横线和竖线。1280 能被 64 整除。1080 竖屏经 V4L2 的 16 像素步进变成编码宽 1088，1088 也能被 64 整除。这两种的 dumb pitch 和硬件跨距相同。
 - **修复**：`external/minigbm` 和 `external/minigbm-upstream` 的 `drv_helpers.c` 里，`DRM_FORMAT_NV12` 且带 `BO_USE_HW_VIDEO_DECODER` 时，报给合成器的跨距改成 `ALIGN(width, 16)`，不再用 dumb pitch。缓冲本身仍按 dumb pitch 分配，大小够放下画面和运动矢量。补丁加在 `patches/external_minigbm_rkvdec_nv12.patch` 和 `patches/external_minigbm-upstream_rkvdec_nv12.patch`。
-- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,420,372` 字节，SHA-256 `7250c915af383b7c4c230fe9f74255a7bf40349bcf2bcc7a6d70a57596ade8d7`。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。刷入后重播这段 720×1280，日志里的布局应变成 `Y offset 0 stride 720, UV offset 921600 stride 720`。还没在实机上验证。
+- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,420,372` 字节，SHA-256 `7250c915af383b7c4c230fe9f74255a7bf40349bcf2bcc7a6d70a57596ade8d7`。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。刷入后重播这段 720×1280，日志里的布局应变成 `Y offset 0 stride 720, UV offset 921600 stride 720`。
+- **实机（2026-10-23）**：刷入上面这份 super 之后，720×1280 硬解画面正常。这份文件后来被第 8 节的 super 盖掉了。
+
+## 8. SELinux 停在 permissive
+
+- **现象**：`getenforce` 是 Permissive，`ro.boot.selinux=permissive`。FIT 命令行写着 `androidboot.selinux=permissive`。内核开了 `CONFIG_SECURITY_SELINUX_DEVELOP`，启动时是 permissive，要等 init 按命令行调用 setenforce。命令行必须写成 `enforcing`，拿掉这个词仍然是 permissive。
+- **这次启动（permissive，播过 720×1280）里，enforcing 会挡住启动或现有功能的拒绝，以及对应的策略**：
+  1. 节点没有类型。genfs 按真实 sysfs 路径匹配，`/sys/class` 的符号链接不算。背光 `/devices/platform/backlight` 标成 `vendor_sysfs_backlight`，`hal_light` 可以写亮度。电池 `sbs-9-000b` 下面的 `wakeup` 仍是 `sysfs_wakeup`，它的 `power_supply` 和 `cros-usbpd-charger` 的 `power_supply` 是 `sysfs_batteryinfo`。IIO 总线和 `cros-ec-sensorhub` 是 `vendor_sysfs_iio`，`vendor_init` 可以改这些节点的属主。`display-subsystem` 是 `sysfs_gpu`。`/bus/media`、`/class/video4linux` 和两个 `video-codec` 是 `sysfs_v4l`。`/dev/media*`、`/dev/v4l-subdev*` 是 `video_device`。外置卡 `fe320000.mmc` 是 `sysfs_devices_block`。
+  2. 外置卡分区：`mmcblk0p3` metadata、`p4` misc、`p5` super、`p6` userdata，整盘是 `gru_sd_device`。内置 eMMC（`mmcblk1`）不贴这些标签。`kcmdlinectrl` 和 `misctrl` 本来就能读写 `misc_block_device`；p4 之前是 `block_device`，enforcing 下不能打开。
+  3. 这块 6.6 内核用 devtmpfs。策略加载之后 `kdevtmpfs` 还要创建 loop 和 dm 节点，创建时类型是 `device`。`coredomain` 禁止 `kernel` 对 `device:blk_file` 做 `create`。补丁 `patches/system_sepolicy_devtmpfs_kernel_device.patch` 在这条 neverallow 里把 `kernel` 除外。允许的只有 `create`、`setattr`、`unlink`，没有 `open`、`read`、`write`。节点随后由 ueventd restorecon。
+  4. 开机把 `Out DAIR Mux` 设成 0 的那条 `tinymix2`，原来经 `/system/bin/sh` 进入 `shell`。`shell` 是 appdomain，不能打开 `audio_device`。现在直接执行 `/system/bin/tinymix2`，进入 `gru_mixer`。
+  5. `expand_userdata` 去掉了 `seclabel u:r:init:s0`。init 不能 `execute_no_trans` 任意文件。脚本进入 `gru_expand`，可以读几何、读写外置卡和 userdata 分区，并在本域执行 `sgdisk` 和 `resize.f2fs`。不能卸载或挂载 `/data`。这张卡已经扩过，脚本在那一步之前就退出。
+  6. memfd 出生时是 `tmpfs`，libcutils 随后改标签。音频、传感器、codec、`system_server` 在改标签之前要读写或映射这块内存。
+- **编译期 neverallow 删掉、enforcing 下仍会拒绝的几条**：`surfaceflinger` 读未单独声明的 `vendor_default_prop`；`vendor_init` 读 `init.svc.usbd`，所以那条 `stop usbd` 的触发可能不生效；`shell` 读内核 syslog。`gru-logcat` 去掉 `seclabel` 后停在 `shell`，kmsg 还能写，logcat 到 kmsg 的镜像不一定还能转进 `logpersist`。应用的 RenderThread 读 `display-subsystem` 的 uevent 仍会被拒绝，surfaceflinger 可以读。
+- **策略**：`m selinux_policy` 已通过。
+- **第一次 enforcing 镜像**（两条都刷过）：
+  - super `1,262,428,564` 字节，SHA-256 `78f30d44382b43eea470fea028447d2d8637015c2d7d778a0f11b17130aa0ebc`。
+  - `vmlinuz.kpart` `14,417,920` 字节，SHA-256 `e8a1fff77bc9a1a2e2f373acbd8a5253ccc700a02d8d16752013dc3e85d00014`。命令行含 `androidboot.selinux=enforcing`。内核仍是 `6.6.34-phase2`。
+- **实机（2026-10-23）**：刷入后没有进到界面。`gru-phase3.log` 的命令行是 enforcing，第一阶段已经建出 `dm-0` 到 `dm-5`，并挂上 system、vendor、system_ext。日志停在这里，是因为 setenforce 之后 `gru-keep` 再读 `/dev/kmsg` 被拒绝，不是启动停在这一行。`/metadata/expand_userdata` 末尾是 `1970-01-01 00:00:08 UTC` 的一次运行，几何读完后打印已经扩过。`/metadata/bootstat` 是空目录，没有 `persist.sys.boot.reason`，所以不是 `vold` 或 `apexd` 的 `reboot_on_failure`。
+- **第一次判断**：`kdevtmpfs` 的 `vfs_mknod()` 要 `CAP_MKNOD`，平台策略只有 `dontaudit`。补了 `allow kernel self:global_capability_class_set mknod;`。编进 precompiled policy 的是 `kernel self:capability { mknod }`，另外还有 `device:blk_file create`。
+- **第二次实机（2026-10-23，super `0da049f6025a4dcee8012adf1edbe486ff290c0592849e1ae831b90ab8ce52e0`）**：背光仍然不亮。`expand_userdata` 又多了一条 `1970-01-01 00:00:08 UTC`，说明 `post-fs` 又跑完了。`post-fs` 里会解开 vtconsole，背光要等 `on boot` 里的 `class hal`（lights HAL），那在 zygote 之后。`bootstat` 仍是空的。这次 `gru-phase3.log` 只有 `51,856` 字节，停在建出 `dm-2`。上一次停在 system_ext 挂载成功。两次都是 setenforce 时 `gru-keep` 丢掉了 `/dev/kmsg`，停的位置差十几行，不是启动停得更早。
+- **日志为什么断**：`gru-keep` 在 devtmpfs 盖住 `/dev` 之前，在 rootfs 上建了 `/dev/kmsg`。启动日志在没有标签的 ext4 上。setenforce 之后，`kernel` 读 `rootfs:chr_file`、写 `unlabeled:file` 都被拒绝，后面的 init 输出和 AVC 都没记下来。`CAP_MKNOD` 那条已经在第二次刷进去的策略里，单靠它没有把背光点亮。
+- **第三次实机（2026-10-23，super `9b8e5d854dd03c97364f6f20334022c8ee80de96394e1c1e68fa19402936c499`）**：背光仍然不亮。这次日志有 `1,685,961` 字节。`apexd.status=activated` 等了 2574ms 之后继续。zygote、surfaceflinger 都起来了。surfaceflinger 找到 `mapper/minigbm_upstream` 后立刻 `SIGABRT`，init 判定 updatable component 在开机完成前退出 4 次，然后不停重启它。
+- **原因**：`init.gru.rc` 的 `early-init` 在 `vendor_init` 里 `insmod /vendor/lib/*.ko`。enforcing 拒绝 `vendor_init` 的 `sys_module`，`finit_module` 返回 `EPERM`。`panfrost.ko`、声卡、传感器、解码器都没装上。审计在前 7 次之后限速，后面的失败不再打 AVC，但 init 仍记下 `Operation not permitted`。没有 GPU，surfaceflinger 起不来，背光也就不亮。`sys.use_memfd` 也设不进去，因为 `vendor_init` 不能写这个 system 属性；`device.mk` 里它本来就该进 system 的 `build.prop`。`sys.brightness.disable_gamma_conversion` 已经在 `PRODUCT_PRODUCT_PROPERTIES` 里。
+- **修复**：`vendor_init` 增加 `sys_module`、`vendor_file:system module_load` 和 `kernel:key search`。`PRODUCT_SYSTEM_PROPERTIES` 写入 `sys.use_memfd=true`。内核分区不用换。
+- **第四次实机（2026-10-23，super `0029be8333846283c5bac89368dad46958a7e4a142826c80f63e905e632fba69`）**：背光仍然不亮。`expand_userdata` 这次的时间是 `2026-10-23 18:24:34 UTC`，时钟已经走起来。第一阶段在 setenforce 之前装进 89 个模块，`panfrost ff9a0000.gpu` 完成初始化，`rockchip-drm` 绑上了 DSI。`apexd.status=activated` 之后 surfaceflinger 找到 `mapper/minigbm_upstream`，接着 `SIGABRT`，init 继续按 updatable component 重启它。
+- **原因**：libdrm 在 surfaceflinger 里读 `/sys/devices/platform/display-subsystem/uevent`，要拿 `OF_FULLNAME`。读失败后再读 `MODALIAS`，同一 inode 上共 4 次 `{ read }`，`tcontext` 是 `sysfs`，`permissive=0`。策略里的 genfscon 会把 `/devices/platform/display-subsystem` 标成 `sysfs_gpu`，surfaceflinger 也能读 `sysfs_gpu`。这个 uevent 在策略加载前就已经存在，跑起来的类型仍是 `sysfs`。`coredomain` 禁止读未单独标注的 `sysfs:file`，所以这次读取失败，surfaceflinger 退出，背光不亮。
+- **修复**：`patches/system_sepolicy_surfaceflinger_sysfs_uevent.patch` 把 surfaceflinger 从这条 neverallow 的读权限里除外，并允许 `surfaceflinger sysfs:file r_file_perms`。写 `sysfs` 仍然禁止。`ff9a0000.gpu` 补了 `sysfs_gpu`。`kdevtmpfs` 建 `/dev/snd` 目录被拒绝的那条，补了 `kernel device:dir create`。内核分区不用换。
+- **第五次实机（2026-10-23，super `2417ddb26cecebbf30e22d39bb8b1337df4c68e68e8fe8e3fc0806c41026bf1a`）**：进到桌面。设置里 SELinux 显示正在运行，`getenforce` 是 Enforcing。内核分区仍是 `e8a1fff77bc9a1a2e2f373acbd8a5253ccc700a02d8d16752013dc3e85d00014`，命令行 `loglevel=7`。
+- **这次启动里不该进发布包的调试**：`gru-keep` 在看门狗移交并执行 `/init.android` 之后仍留着一个 `SCHED_FIFO` 进程（pid 1069），每 200 ms 读 `/dev/kmsg`，并以 `O_SYNC` 写 `/bootlog/gru-phase3.log`。`init.svc.gru_logcat` 是空的，这条服务没跑起来，但 `init.gru.rc` 里还定义着，会把 logcat 镜像到 `/data/gru-logcat.txt` 和 `/dev/kmsg`。
+- **打包前从源码拿掉的**：`gru-keep` 只在执行 Android init 之前把当时的 kmsg 写进 bootlog，然后卸掉 bootlog、关掉日志、执行 `/init.android`，不再留常驻进程。`gru_logcat` 服务和 `gru-logcat.sh` 不再装进镜像。FIT 命令行改成 `loglevel=4`，界面起来之后仍把控制台降到 `3 4 1 3`。`printk.devkmsg=on` 留着，避免扩容脚本写 kmsg 被限速。`debug.renderengine.backend=skiaglthreaded`、`debug.hwui.renderer=skiagl`、`debug.stagefright.c2-poolmask=0x70000`、无线 adb（`ro.adb.secure=0`，端口 5555）和桌面模式那条属性都是功能设置，继续留着。
+- **清理后的镜像（还没刷）**：super 仍是 `1,262,428,564` 字节，SHA-256 `437a56cda05720f693c446e9fdbba350cad76b7b598a80881ace4e95e7a80b91`。`vmlinuz.kpart` `13,746,176` 字节，SHA-256 `6583c6480079801f6b9edd27830d95251dae40c1b9820185ba54b47504f94a5d`，命令行是 `loglevel=4` 和 `androidboot.selinux=enforcing`。`prebuilt/gru-keep` 这次用 ramdisk 的 bionic 静态链接并去掉了调试符号，还没在实机上跑过。只刷 super 的话，卡上的旧 FIT 仍会留下常驻日志进程和 `loglevel=7`。回退仍是 permissive FIT `920f638358c36c85800bd48f4b9ae12bc528af8242d096557c3f03a65cd6e5ae` 配 super `7250c915af383b7c4c230fe9f74255a7bf40349bcf2bcc7a6d70a57596ade8d7`。只换回旧 super、留下 enforcing 的 FIT，还会停在同一处。

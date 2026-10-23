@@ -6,7 +6,8 @@
 | :--- | :--- | :--- |
 | 1 | 已在本次启动中验证，重启后要靠新的 `vendor` 镜像才保留 | 睡眠唤醒后内置扬声器没声音 |
 | 2 | 已修复，2026-10-22 实机验证 | 滑动被锁在 30 fps |
-| 3 | 修复已打进 `cros-ec-sensorhub.ko`，刷新 super 后要等下一次早上第一次开机才能验证 | 早上第一次起来后自动旋转停住，加速度和陀螺仪不再出数 |
+| 3 | 已修复，2026-10-23 实机验证 | 早上第一次起来后自动旋转停住，加速度和陀螺仪不再出数 |
+| 4 | 第一次镜像插拔能到 HDMI，连接被 HAL 拒绝；新 super 还没验证 | USB-C 接显示器或电视时，画面正常，声音仍从内置扬声器出来 |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -54,4 +55,21 @@
   2. 时间戳不往前走，或者 `last_len == 0` 时，不再整批丢掉。只把这一批里最新的一笔按 10 ms 往前送，并把锚点收成一笔（`last_len = 1`，`penul_len = 1`）。算出来的周期如果是 0 或负数，也按 10 ms。
   3. 丢掉的样本仍打 `lost N samples when spreading`，改成限速，不再把 dmesg 刷满。
 - **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,416,276` 字节，SHA-256 `c789abb06c4a134a0df142077ee905b7231782b60311c5a5f994e6a3a81fe8a4`。里面的 `/vendor/lib/cros-ec-sensorhub.ko` 是新模块（SHA-256 `b6f2ae8e876ff86dac42a4b67b2f6c7d16c02518c53929599cd00e79847ca79a`）。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。
-- **还没在实机上验证**。同一天重启后 FIFO 里已经没有过夜的堆积，当天再试复现不了。刷入这份 super 之后，下一次早上第一次开机才是这次修复的检查。
+- **实机（2026-10-23）**：刷入上面这份 super 之后，早上第一次开机的自动旋转恢复。
+
+## 4. USB-C 接显示器或电视时没有声音
+
+- **现象**：USB-C 转 HDMI、USB-C 转 DP 都一样。画面正常，所有声音仍从内置扬声器出来，播放设备列表里只有内置这一项。同一条 HDMI 转接线在运行 Android 15 的任天堂 Switch 上有声音。音量条 0–10% 才有效是 postmarketOS 上的问题，这套 Android 上没有。
+- **不是上游缺 HDMI codec**。postmarketOS wiki 写的 “HDMI codec is currently not supported” 对这台机器的内核已经不成立：`snd-soc-hdmi-codec` 已加载，ALSA 有 `card 0` 的 `pcmC0D3p`（`DP PCM` / `spdif-hifi-3`），声卡上也有 `DP Jack`。SPDIF 在设备树里接到 cdn-dp，和喇叭用的 i2s0 不是同一条 DAI。
+- **原因**：
+  1. 上游把 DP 插拔报成 `SND_JACK_LINEOUT`。Android 的 `WiredAccessoryManager` 只在同时看到 `SW_LINEOUT_INSERT` 和 `SW_VIDEOOUT_INSERT` 时才当成 HDMI；只有 LINEOUT 会被当成模拟线路输出，打开的是耳机那路（`pcmC0D2`），不是 DP。
+  2. `config_useDevInputEventForAudioJack` 是关的，插拔事件到不了 AudioService。
+  3. `audio_policy_configuration.xml` 没有 `AUDIO_DEVICE_OUT_HDMI` 端口，策略里可选的输出只有扬声器。
+- **修复**：
+  1. `patches/kernel_6.6.34_dp_audio_avout_jack.patch`：`hdmi-codec.c` 和 `rk3399_gru_sound.c` 把 DP jack 改成 `SND_JACK_AVOUT`（LINEOUT|VIDEOOUT）。模块 `snd-soc-hdmi-codec.ko`（SHA-256 `46d642583be1dfc34407308b18b10b5e89c923e00db79113d44955e0b642bab9`）、`snd-soc-rk3399-gru-sound.ko`（SHA-256 `3f84954ea097f643b862513709c1932cf6b113abd202d8f5085a2fc94853b8fe`）。vermagic 仍是 `6.6.34-phase2`，不用换内核。
+  2. overlay 打开 `config_useDevInputEventForAudioJack`。耳机插拔本来就走这套开关，一起打开。
+  3. 音频策略增加 `HDMI Out`（`AUDIO_DEVICE_OUT_HDMI`，48 kHz 立体声，不放进 `attachedDevices`）。`StreamPrimary` 遇到 HDMI 时打开 `pcmC0D3p`（`ro.vendor.audio.hdmi.alsa_device`，默认 3）。
+- **第一次镜像没接上（2026-10-23 11:15，`10.0.0.114:5555`，SHA-256 `e85325df337ed0bbb31e7e64ca7162a22979251e861c56307b9a91f161c8ac52`）**：HDMI 和 DP 插上后画面正常，播放设备仍只有本机。DP Jack 的开关已经是 `SW 140`（LINEOUT|VIDEOOUT）。`WiredAccessoryManager` 收到插拔，策略也找到了 `AUDIO_DEVICE_OUT_HDMI`。接着 `AHAL_Module` 打 `populateConnectedDevicePort: module implementation must override 'populateConnectedDevicePort'`，`setDeviceConnectionState` 返回 **-38**（`EX_ILLEGAL_STATE`），端口没有变成可用设备。默认实现拒绝一切外部设备，XML 里写好的静态 profile 也不够。
+- **接着补的一处**：`ModulePrimary::populateConnectedDevicePort` 对已经声明了 profile 的外部端口直接返回成功，沿用策略里的 48 kHz 立体声。补丁在 `patches/hardware_interfaces_audio_usb_alsa_sync_io.patch`。
+- **预期**：插上之后播放设备里出现 HDMI，媒体切到电视。通知音、铃声仍可能留在内置扬声器，这是 Android 对 HDMI 的默认策略。
+- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,416,276` 字节，SHA-256 `47fbb4fcd3e31bc416c17b8933fa95a99a004b00b38acd80adeb1c80acfb245b`。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。这份还没在实机上验证。

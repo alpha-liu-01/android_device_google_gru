@@ -100,6 +100,7 @@ if [[ -n "${KERNEL_ROOT}" ]]; then
         "kernel_6.6.34_drm_master_and_fbdev_emulation.patch"
         "kernel_6.6.34_rkisp1_min_buffers_needed.patch"
         "kernel_6.6.34_rockchip_i2s_s3_mclk.patch"
+        "kernel_6.6.34_dp_audio_avout_jack.patch"
     )
     for kp in "${KERNEL_PATCHES[@]}"; do
         apply_patch "${KERNEL_ROOT}" "${PATCH_DIR}/${kp}"

@@ -1,0 +1,43 @@
+--- a/sound/soc/codecs/hdmi-codec.c
++++ b/sound/soc/codecs/hdmi-codec.c
+@@ -852,7 +852,7 @@
+ {
+ 	if (jack_status != hcp->jack_status) {
+ 		if (hcp->jack)
+-			snd_soc_jack_report(hcp->jack, jack_status, SND_JACK_LINEOUT);
++			snd_soc_jack_report(hcp->jack, jack_status, SND_JACK_AVOUT);
+ 		hcp->jack_status = jack_status;
+ 	}
+ }
+@@ -866,7 +866,7 @@
+ 			hcp->hcd.ops->get_eld(dev->parent, hcp->hcd.data,
+ 					    hcp->eld, sizeof(hcp->eld));
+ 		}
+-		hdmi_codec_jack_report(hcp, SND_JACK_LINEOUT);
++		hdmi_codec_jack_report(hcp, SND_JACK_AVOUT);
+ 	} else {
+ 		hdmi_codec_jack_report(hcp, 0);
+ 		memset(hcp->eld, 0, sizeof(hcp->eld));
+@@ -886,7 +886,7 @@
+ 		 * Report the initial jack status which may have been provided
+ 		 * by the parent hdmi driver while the hpd hook was registered.
+ 		 */
+-		snd_soc_jack_report(jack, hcp->jack_status, SND_JACK_LINEOUT);
++		snd_soc_jack_report(jack, hcp->jack_status, SND_JACK_AVOUT);
+ 
+ 		return 0;
+ 	}
+--- a/sound/soc/rockchip/rk3399_gru_sound.c
++++ b/sound/soc/rockchip/rk3399_gru_sound.c
+@@ -177,7 +177,10 @@
+ 	int ret;
+ 
+ 	/* Enable jack detection. */
+-	ret = snd_soc_card_jack_new(card, "DP Jack", SND_JACK_LINEOUT,
++	/* Android treats LINEOUT alone as analog line-out. LINEOUT|VIDEOOUT
++	 * in one report is what WiredAccessoryManager maps to HDMI.
++	 */
++	ret = snd_soc_card_jack_new(card, "DP Jack", SND_JACK_AVOUT,
+ 				    &cdn_dp_card_jack);
+ 	if (ret) {
+ 		dev_err(card->dev, "Can't create DP Jack %d\n", ret);

@@ -95,6 +95,7 @@ if [[ -n "${KERNEL_ROOT}" ]]; then
     echo "=== Applying Linux 6.6.34 kernel patches to ${KERNEL_ROOT} ==="
     KERNEL_PATCHES=(
         "kernel_6.6.34_cros_ec_keyb_s3_power_button_wakeup.patch"
+        "kernel_6.6.34_cros_ec_sensorhub_spread_stall.patch"
         "kernel_6.6.34_cros_usbpd_charger_online_notify.patch"
         "kernel_6.6.34_drm_master_and_fbdev_emulation.patch"
         "kernel_6.6.34_rkisp1_min_buffers_needed.patch"

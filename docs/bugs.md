@@ -6,6 +6,7 @@
 | :--- | :--- | :--- |
 | 1 | 已在本次启动中验证，重启后要靠新的 `vendor` 镜像才保留 | 睡眠唤醒后内置扬声器没声音 |
 | 2 | 已修复，2026-10-22 实机验证 | 滑动被锁在 30 fps |
+| 3 | 修复已打进 `cros-ec-sensorhub.ko`，刷新 super 后要等下一次早上第一次开机才能验证 | 早上第一次起来后自动旋转停住，加速度和陀螺仪不再出数 |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -41,3 +42,16 @@
 - **当场恢复**：`setprop vendor.minigbm.debug nocompression` 后重启 allocator 和 surfaceflinger，framebuffer 回到 `mod 0`、`compressed: false`。这个属性重启就丢。回退镜像另存在 `super-linear.img`，`1,262,412,180` 字节，SHA-256 `23b6268974f2c25e312b66a03bf19e404667701b08defa7d886daf1214f50bcc`。
 - **大 VOP + AFBC 已生效，体感没有变化（2026-10-22，`10.0.0.110:5555`，PiliPlus 在前台）**：镜像 SHA-256 `d42fde74ce7b878b92c39c313a36809d9de80e3178e4b5d15c3621ee4ae01924`。日志是 `Preferring CRTC 44 (4 planes) for DSI-1`，分配器是 `Loaded driver rockchip`。PiliPlus 的 SurfaceView 和 framebuffer 都是 `fourcc/mod 875708993/576460752303423569`（`0x0800000000000051`），`compressed: true`，大小 **12491 KiB**。同一次滑动里，生产间隔中位数从 **32.5 ms** 降到 **29.3 ms**，上屏间隔中位数仍是 **33.4 ms**（62 帧里 45 帧落在 20–40 ms）。帧还是隔一个 vsync 才送上去，所以看起来仍是 30 fps。
 - **竖屏对照，平面合成仍然没接上（2026-10-22，同一镜像）**：机器当时停在竖屏，自动旋转开着。PiliPlus 的 SurfaceView 是 `1536x2048`、变换是 0，图层仍全部是 `CLIENT`。生产间隔中位数 **31.6 ms**，上屏间隔中位数 **33.4 ms**。滑动时内核打出 `AFBC does not support offset display`，壁纸的源坐标不是 0。`vop_crtc_atomic_check` 还要求一帧最多一个 AFBC 平面。测试提交失败后，hwcomposer 把整帧退回 CLIENT。横屏图层带 90° 旋转，这块 VOP 的 AFBC 不能转，所以平面合成接不住现在的滑动。文档里其余还没做的项（关掉 HW overlay、HWUI dirty region）改不了这个大约 30 ms 的生产间隔。
+
+## 3. 早上第一次起来后加速度和陀螺仪不再出数
+
+- **现象**：每天早上第一次起来，自动旋转停住。AIDA64 里加速度、陀螺仪以及由它们算出来的重力、线性加速度、旋转矢量都没有新读数。温度还在变，温度走的是 SoC 的 thermal zone。锁屏无关：`Sensor Privacy: disabled`，`WindowOrientationListener` 已经订着 `cros-ec-accel`，`has sensor access: true`，只是一个事件都没送到。同一天再关机开机就不再出现。2026-10-22 早上是这样，2026-10-23 早上又是这样。
+- **2026-10-23 09:35 抓到的现场（`10.0.0.114`，开机约 7 分钟，还没重启）**：`dumpsys sensorservice` 的 Recent events 是空的。`iio:device0`（`cros-ec-accel`）的 buffer 已经 `enable=1`。内核从 `09:33:12` 起不停打 `cros-ec-sensorhub.1.auto: Sensor 1: lost N samples when spreading`，两分钟里 N 从 **22219** 涨到 **49353**，抓 dmesg 时已经到 **69149**，一共一万七千多行。Sensor 0 同时在丢，只是慢一些（同一时刻大约 3480）。这些警告把内核环形缓冲盖满了，更早的 suspend 行已经不在 dmesg 里。
+- **原因**：`cros_ec_sensor_ring_spread_add()`（`cros_ec_sensorhub_ring.c`）要靠上一批的 `last_len` 把同一时间戳上的一串样本摊开。过夜之后 FIFO 溢出，resume 和 `total_lost` 都会把 `last_len` 清成 0（`tight_timestamps`）。EC 接着送来的样本时间戳不往前走，全挤在同一个时间点。`last_len == 0` 时函数算不出周期，整批丢掉，并且把 `penul_len` 留成 0。后面每个新样本的时间戳仍然不大于 `last_ts`，代码又退回 `penul_len == 0`，继续整批丢掉。计数因此一直涨，HAL 侧永远没有新事件。重启把 `batch_state` 清掉，FIFO 里也不再有这一夜的堆积，时间戳重新往前走，同一天后面的开关机就正常。
+- **2026-10-22 下午那次短睡眠没有卡住**：电源键睡眠大约 4 秒，内核是 `Sensor 0: lost: 6362 out of 6362`，16 秒后加速度恢复到 Z 轴约 9.8 m/s²。短睡眠的时间戳还能往前走，摊开逻辑能重新算周期。过夜之后时间戳停住，才会卡死。
+- **修复**（`patches/kernel_6.6.34_cros_ec_sensorhub_spread_stall.patch`，模块 `cros-ec-sensorhub.ko`，vermagic 仍是 `6.6.34-phase2`，不用换内核）：
+  1. 比上一笔样本早超过 1 秒的，当成断档。不再把它的时间戳改成 `last_ts`，同时把 `last_len`、`penul_len` 清掉，让这一笔按新的一批重新开始。
+  2. 时间戳不往前走，或者 `last_len == 0` 时，不再整批丢掉。只把这一批里最新的一笔按 10 ms 往前送，并把锚点收成一笔（`last_len = 1`，`penul_len = 1`）。算出来的周期如果是 0 或负数，也按 10 ms。
+  3. 丢掉的样本仍打 `lost N samples when spreading`，改成限速，不再把 dmesg 刷满。
+- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,416,276` 字节，SHA-256 `c789abb06c4a134a0df142077ee905b7231782b60311c5a5f994e6a3a81fe8a4`。里面的 `/vendor/lib/cros-ec-sensorhub.ko` 是新模块（SHA-256 `b6f2ae8e876ff86dac42a4b67b2f6c7d16c02518c53929599cd00e79847ca79a`）。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。
+- **还没在实机上验证**。同一天重启后 FIFO 里已经没有过夜的堆积，当天再试复现不了。刷入这份 super 之后，下一次早上第一次开机才是这次修复的检查。

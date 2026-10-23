@@ -7,7 +7,9 @@
 | 1 | 已在本次启动中验证，重启后要靠新的 `vendor` 镜像才保留 | 睡眠唤醒后内置扬声器没声音 |
 | 2 | 已修复，2026-10-22 实机验证 | 滑动被锁在 30 fps |
 | 3 | 已修复，2026-10-23 实机验证 | 早上第一次起来后自动旋转停住，加速度和陀螺仪不再出数 |
-| 4 | 第一次镜像插拔能到 HDMI，连接被 HAL 拒绝；新 super 还没验证 | USB-C 接显示器或电视时，画面正常，声音仍从内置扬声器出来 |
+| 4 | 已修复，2026-10-23 实机验证 | USB-C 接显示器或电视时，画面正常，声音仍从内置扬声器出来 |
+| 5 | 修复已打进 super，下次开机才能验证 | 每次开机后「设置 → 显示 → 自动熄屏」变成未设置 |
+| 6 | 修复已打进 super，下次开机才能验证 | 开机没有 LineageOS 标志，先黑屏无背光，再黑屏有背光 |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -71,5 +73,20 @@
   3. 音频策略增加 `HDMI Out`（`AUDIO_DEVICE_OUT_HDMI`，48 kHz 立体声，不放进 `attachedDevices`）。`StreamPrimary` 遇到 HDMI 时打开 `pcmC0D3p`（`ro.vendor.audio.hdmi.alsa_device`，默认 3）。
 - **第一次镜像没接上（2026-10-23 11:15，`10.0.0.114:5555`，SHA-256 `e85325df337ed0bbb31e7e64ca7162a22979251e861c56307b9a91f161c8ac52`）**：HDMI 和 DP 插上后画面正常，播放设备仍只有本机。DP Jack 的开关已经是 `SW 140`（LINEOUT|VIDEOOUT）。`WiredAccessoryManager` 收到插拔，策略也找到了 `AUDIO_DEVICE_OUT_HDMI`。接着 `AHAL_Module` 打 `populateConnectedDevicePort: module implementation must override 'populateConnectedDevicePort'`，`setDeviceConnectionState` 返回 **-38**（`EX_ILLEGAL_STATE`），端口没有变成可用设备。默认实现拒绝一切外部设备，XML 里写好的静态 profile 也不够。
 - **接着补的一处**：`ModulePrimary::populateConnectedDevicePort` 对已经声明了 profile 的外部端口直接返回成功，沿用策略里的 48 kHz 立体声。补丁在 `patches/hardware_interfaces_audio_usb_alsa_sync_io.patch`。
-- **预期**：插上之后播放设备里出现 HDMI，媒体切到电视。通知音、铃声仍可能留在内置扬声器，这是 Android 对 HDMI 的默认策略。
-- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,416,276` 字节，SHA-256 `47fbb4fcd3e31bc416c17b8933fa95a99a004b00b38acd80adeb1c80acfb245b`。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。这份还没在实机上验证。
+- **验证用的镜像** SHA-256 `47fbb4fcd3e31bc416c17b8933fa95a99a004b00b38acd80adeb1c80acfb245b`，`1,262,416,276` 字节。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。这份文件后来被第 5、6 节的 super 盖掉了。
+- **实机（2026-10-23 11:30–11:32，`10.0.0.114:5555`，上面这份 super）**：HDMI 和 DP 各插了一次，日志里两条线都是 `cdn-dp`，分不出哪次是哪根线。第一次 `11:30:11` `Connected, not enabled. Enabling cdn`，`11:31:01` 主输出关掉 PCM，`11:31:03` 释放已经配好的 HDMI 端口 23（48 kHz、立体声、`INT_16_BIT`）。这次的连接行已经滚出 logcat。第二次 `11:31:56` 再次 `Enabling cdn`，`11:31:57` `populateConnectedDevicePort: keeping declared profiles`，`connected port ID 25`，没有再出现 `-38`。`11:32:07` 主输出（mix handle 13）的 patch 落到这个 HDMI 端口，`setConnectedDevices` 是 `connection: hdmi`。从这时起到 `11:32:24` 拔掉，可观察帧数从 **7643136** 涨到 **8470528**，差 **827392** 帧，按 48 kHz 是 **17.24 秒**，和墙上时间 **17.28 秒** 一致。`11:32:30` 主输出回到 `CARD_0_DEV_0`。查日志时线已经拔了，`dumpsys media.audio_policy` 的可用输出只剩扬声器。
+
+## 5. 每次开机后自动熄屏变成未设置
+
+- **现象**：开机后「设置 → 显示 → 自动熄屏」没有选中任何一项。
+- **原因**：阶段 3 在 `sys.boot_completed=1` 里执行 `settings put system screen_off_timeout 86400000`（24 小时），每次开机都写一遍。设置列表只到 30 分钟（`1800000`），`86400000` 对不上任何一项，下拉框就是空的。平台默认是 `60000`（1 分钟）。
+- **修复**：`init.gru.rc` 不再每次写入这个值。`/vendor/bin/boot_settings.sh` 只在读到 `86400000` 时改回 `60000`。用户另外选过的超时保留。
+
+## 6. 开机没有 LineageOS 标志
+
+- **现象**：开机先是一段黑屏、背光不亮，然后一段黑屏、背光亮着，没有 LineageOS 标志。系统本身能进桌面。
+- **原因**：
+  1. 阶段 3 在 early-init 设置 `debug.sf.nobootanimation 1`。当时 bootanim 和 SwiftShader 一起占 CPU，SystemUI 启动超时。镜像里的 `bootanimation.zip` 一直都在（`1536×512`，60 fps，Lineage 标志），只是没被播放。SwiftShader 后来已经从镜像里拿掉，合成走 Panfrost。
+  2. 背光不亮的那一段是 SurfaceFlinger 接手面板之前。命令行有 `drm_kms_helper.fbdev_emulation=0`，post-fs 又把帧缓冲控制台解开，免得控制台占着主平面让合成器变成 headless。这段不能靠打开 bootanim 补上。
+- **修复**：去掉 `debug.sf.nobootanimation`。背光亮起来之后应出现 Lineage 标志，直到桌面。背光亮之前仍是黑的。
+- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,416,276` 字节，SHA-256 `c870421b3317bc37ca25d728b6cde904c5aeaa2deed10a7a441e722a6cfdf2b8`。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。第 5 节和第 6 节都在这份里。还没在实机上验证。

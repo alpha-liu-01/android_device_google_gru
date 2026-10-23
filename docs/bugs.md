@@ -8,8 +8,9 @@
 | 2 | 已修复，2026-10-22 实机验证 | 滑动被锁在 30 fps |
 | 3 | 已修复，2026-10-23 实机验证 | 早上第一次起来后自动旋转停住，加速度和陀螺仪不再出数 |
 | 4 | 已修复，2026-10-23 实机验证 | USB-C 接显示器或电视时，画面正常，声音仍从内置扬声器出来 |
-| 5 | 修复已打进 super，下次开机才能验证 | 每次开机后「设置 → 显示 → 自动熄屏」变成未设置 |
-| 6 | 修复已打进 super，下次开机才能验证 | 开机没有 LineageOS 标志，先黑屏无背光，再黑屏有背光 |
+| 5 | 已修复，2026-10-23 实机验证 | 每次开机后「设置 → 显示 → 自动熄屏」变成未设置 |
+| 6 | 已修复，2026-10-23 实机验证 | 开机没有 LineageOS 标志，先黑屏无背光，再黑屏有背光 |
+| 7 | 修复已打进 super，下次播放才能验证 | 720p 竖屏（720×1280）硬解画面全是横线和竖线 |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -89,4 +90,13 @@
   1. 阶段 3 在 early-init 设置 `debug.sf.nobootanimation 1`。当时 bootanim 和 SwiftShader 一起占 CPU，SystemUI 启动超时。镜像里的 `bootanimation.zip` 一直都在（`1536×512`，60 fps，Lineage 标志），只是没被播放。SwiftShader 后来已经从镜像里拿掉，合成走 Panfrost。
   2. 背光不亮的那一段是 SurfaceFlinger 接手面板之前。命令行有 `drm_kms_helper.fbdev_emulation=0`，post-fs 又把帧缓冲控制台解开，免得控制台占着主平面让合成器变成 headless。这段不能靠打开 bootanim 补上。
 - **修复**：去掉 `debug.sf.nobootanimation`。背光亮起来之后应出现 Lineage 标志，直到桌面。背光亮之前仍是黑的。
-- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,416,276` 字节，SHA-256 `c870421b3317bc37ca25d728b6cde904c5aeaa2deed10a7a441e722a6cfdf2b8`。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。第 5 节和第 6 节都在这份里。还没在实机上验证。
+- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,416,276` 字节，SHA-256 `c870421b3317bc37ca25d728b6cde904c5aeaa2deed10a7a441e722a6cfdf2b8`。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。第 5 节和第 6 节都在这份里。
+- **实机（2026-10-23）**：刷入上面这份 super 之后，自动熄屏有了选中项，开机背光亮起后出现 Lineage 标志。这份文件后来被第 7 节的 super 盖掉了。
+
+## 7. 720p 竖屏硬解画面全是横线和竖线
+
+- **现象**：H.264 720×1280 用 `c2.v4l2.avc.decoder` 硬解时，画面分辨不出内容，全是横线和竖线。1280×720 和 1080p 竖屏正常。
+- **现场（2026-10-23 11:53，`10.0.0.114:5555`，正在播这段视频）**：`StatelessV4L2Decoder` 打出 `Format changed: coded 720x1280, visible (0,0)-(720,1280)`，接着 `Output buffer layout: Y offset 0 stride 768, UV offset 983040 stride 768`。`983040 = 768 × 1280`。CCodec 的 `raw.size` 和 `raw.crop` 都是 720×1280。
+- **原因**：`rkvdec-h264.c` 的 `hor_virstride` 是 `(bit_depth + 8) × width / 8`。8-bit、宽 720 时跨距是 **720**，UV 从 `720 × 1280 = 921600` 开始写。分配器走 dumb 缓冲，`rockchip_gem_dumb_create` 把 pitch 对齐到 64 字节，720 变成 **768**，gralloc 把这个 pitch 报成平面跨距。合成器按 768 读、硬件按 720 写，每一行错 48 字节，整帧就散成横线和竖线。1280 能被 64 整除。1080 竖屏经 V4L2 的 16 像素步进变成编码宽 1088，1088 也能被 64 整除。这两种的 dumb pitch 和硬件跨距相同。
+- **修复**：`external/minigbm` 和 `external/minigbm-upstream` 的 `drv_helpers.c` 里，`DRM_FORMAT_NV12` 且带 `BO_USE_HW_VIDEO_DECODER` 时，报给合成器的跨距改成 `ALIGN(width, 16)`，不再用 dumb pitch。缓冲本身仍按 dumb pitch 分配，大小够放下画面和运动矢量。补丁加在 `patches/external_minigbm_rkvdec_nv12.patch` 和 `patches/external_minigbm-upstream_rkvdec_nv12.patch`。
+- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,420,372` 字节，SHA-256 `7250c915af383b7c4c230fe9f74255a7bf40349bcf2bcc7a6d70a57596ade8d7`。vermagic 仍是 `6.6.34-phase2`，不用换内核分区。刷入后重播这段 720×1280，日志里的布局应变成 `Y offset 0 stride 720, UV offset 921600 stride 720`。还没在实机上验证。

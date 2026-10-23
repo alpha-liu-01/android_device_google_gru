@@ -75,3 +75,19 @@ index f74d237..16f0e9f 100644
  		}
  	}
  
+diff --git a/drv_helpers.c b/drv_helpers.c
+--- a/drv_helpers.c
++++ b/drv_helpers.c
+@@ -396,5 +411,11 @@
+ 	}
+ 
+-	drv_bo_from_format(bo, create_dumb.pitch, 1, height, format);
++	/* rockchip_gem_dumb_create aligns the pitch to 64 bytes. rkvdec H.264
++	 * and hantro write the picture at the 16-pixel coded stride, which is
++	 * what the compositor has to sample. */
++	uint32_t bo_stride = create_dumb.pitch;
++	if (format == DRM_FORMAT_NV12 && (use_flags & BO_USE_HW_VIDEO_DECODER))
++		bo_stride = ALIGN(width, 16);
++	drv_bo_from_format(bo, bo_stride, 1, height, format);
+ 
+ 	bo->handle.u32 = create_dumb.handle;

@@ -1,2 +1,30 @@
 allow hal_camera_default sysfs_v4l:dir r_dir_perms;
 allow hal_camera_default sysfs_v4l:file r_file_perms;
+# Sensor uevent nodes that exist before policy load stay type sysfs.
+# libcamera reads them while matching the pipeline; the denial leaves
+# the provider with zero cameras.
+allow hal_camera_default sysfs:file r_file_perms;
+
+# The request FMQ is a memfd. libcutils probes memfd by truncating
+# test_android_memfd; that write is denied, has_memfd_support() stays
+# false, and CameraDeviceSession reports an invalid request queue.
+# cameraserver maps the same fd once the session is handed back.
+type hal_camera_default_tmpfs, file_type;
+tmpfs_domain(hal_camera_default)
+allow cameraserver hal_camera_default_tmpfs:file { getattr read write map };
+
+# cameraserver hands the app its own request and result queues. They are
+# s0 and the app carries MLS categories, so the fd is refused and the app
+# sees a dead binder from getCaptureResultMetadataQueue.
+typeattribute cameraserver_tmpfs mlstrustedobject;
+allow appdomain cameraserver_tmpfs:file { getattr read write map };
+
+# The device session imports every preview buffer through
+# GraphicBufferMapper. Without the allocator and mapper it aborts with
+# "gralloc-mapper is missing" on the first request, and the provider
+# restarts in a loop.
+hal_client_domain(hal_camera_default, hal_graphics_allocator)
+# Composer hands the camera a sync_file fence for the preview buffer.
+allow hal_camera_default hal_graphics_composer_default:fd use;
+# vendor.minigbm.device names the DRM card the minigbm mapper opens.
+get_prop({ hal_camera_default cameraserver }, vendor_minigbm_prop)

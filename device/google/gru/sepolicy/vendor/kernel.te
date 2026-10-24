@@ -2,7 +2,7 @@
 # may_create() checks search+write+add_name on the directory, then
 # create on the new inode. ueventd restorecon relabels the node.
 # kdevtmpfs also mkdir's /dev/snd. create is the new directory inode.
-allow kernel device:dir { search write add_name remove_name create };
+allow kernel device:dir { search write add_name remove_name create rmdir };
 allow kernel device:blk_file { getattr create setattr unlink };
 allow kernel device:chr_file { getattr create setattr unlink };
 

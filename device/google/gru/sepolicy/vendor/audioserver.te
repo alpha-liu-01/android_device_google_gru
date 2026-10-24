@@ -1,0 +1,9 @@
+# Audio tracks use a memfd labeled audioserver_tmpfs. A file write requires
+# the process and the file to be at the same MLS level, unless the file type
+# is mlstrustedobject. system_server is s0, so touch sounds still play.
+# An app is s0 plus categories, so its write is denied and the track stays
+# silent. ashmem_device and system_server_tmpfs already have this attribute.
+typeattribute audioserver_tmpfs mlstrustedobject;
+
+# The minigbm mapper reads vendor.minigbm.device while importing a buffer.
+get_prop(mediaserver, vendor_minigbm_prop);

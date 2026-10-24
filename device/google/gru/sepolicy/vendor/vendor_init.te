@@ -8,6 +8,11 @@ allow vendor_init vendor_sysfs_iio:file { getattr open read setattr };
 allow vendor_init self:global_capability_class_set sys_module;
 allow vendor_init vendor_file:system module_load;
 allow vendor_init kernel:key search;
+# finit_module looks up a key in vendor_init's own keyring. The kernel
+# domain then searches that same keyring. This does not grant the key to
+# any other process.
+allow vendor_init self:key write;
+allow kernel vendor_init:key search;
 
 set_prop(vendor_init, vendor_minigbm_prop)
 

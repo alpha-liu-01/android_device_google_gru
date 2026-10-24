@@ -106,15 +106,11 @@ on early-init
     # aborts when sys.usb.controller is empty. init.mainline.usb.rc would
     # otherwise set configfs to 2 and restart that HAL forever.
     setprop vendor.usb.configfs 0
-    # No /dev/ashmem on this kernel. libcutils creates a memfd instead when
-    # this is set before zygote starts.
-    setprop sys.use_memfd true
+    # sys.use_memfd and sys.brightness.disable_gamma_conversion are system
+    # properties. They are set from the product makefile. vendor_init cannot
+    # set them once SELinux is enforcing.
     setprop debug.renderengine.backend skiaglthreaded
     setprop debug.hwui.renderer skiagl
-    # pwm_bl.c generates a 4096-step CIE 1931 cubic curve when DT omits
-    # brightness-levels, so /sys/class/backlight/backlight/brightness is
-    # already perceptually linear. Skip Android's second HLG gamma curve.
-    setprop sys.brightness.disable_gamma_conversion true
 
 on init
     write /sys/block/zram0/comp_algorithm lz4
@@ -192,11 +188,6 @@ on property:sys.boot_completed=1
     exec_background - root root -- /system/bin/sh -c "/system/bin/settings put global override_desktop_experience_features 1"
     exec_background - root audio -- /system/bin/tinymix2 -D 0 set "Out DAIR Mux" 0
     write /proc/sys/kernel/printk "3 4 1 3"
-
-# usbd only talks to IUsbGadget. With configfs left at 0 that service is
-# never registered, and usbd retries it on every boot.
-on property:init.svc.usbd=running
-    stop usbd
 
 service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
                        -O/data/vendor/wifi/wpa/sockets \

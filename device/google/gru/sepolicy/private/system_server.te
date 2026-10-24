@@ -1,0 +1,4 @@
+# InputReader reads /sys/class/input/*/name and the keyboard country code.
+# The class entry is a symlink and the target stays type sysfs. Write is
+# still forbidden.
+allow system_server sysfs:file r_file_perms;

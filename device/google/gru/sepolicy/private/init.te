@@ -1,0 +1,4 @@
+# Boot tracing closes error_report_end. On this kernel that node is a
+# directory, and platform policy only allows the file class. Creating the
+# enable entry is add_name, which write does not cover.
+allow init debugfs_bootreceiver_tracing:dir { write add_name };

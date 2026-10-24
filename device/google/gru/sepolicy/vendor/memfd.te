@@ -14,3 +14,36 @@ allow {
 allow { mediaswcodec mediacodec } appdomain_tmpfs:file { read write map };
 allow { mediaswcodec audioserver hal_sensors_default } system_server_tmpfs:file { read write map };
 allow system_server audioserver_tmpfs:file { read write map };
+# Ringtones and notification sounds go through MediaPlayer in mediaserver.
+# Without this, the binder reply carrying the track buffer fails to
+# translate the fd and the AudioTrack is never created.
+allow mediaserver audioserver_tmpfs:file { getattr read write map };
+
+# NuPlayer queues live in mediaserver_tmpfs. Both decoders read them.
+# MetadataRetrieverClient is the same memfd, handed to the app. The file is
+# s0 and the app carries MLS categories, so the fd is refused.
+typeattribute mediaserver_tmpfs mlstrustedobject;
+allow { mediaswcodec mediacodec } mediaserver_tmpfs:file { getattr read write map };
+allow appdomain mediaserver_tmpfs:file { getattr read write map };
+
+# A2DP StartSession maps an FMQ memfd that stays type tmpfs. The binder
+# reply is dropped and bluetooth aborts, so a headset never finishes
+# connecting. A HID mouse does not open this queue.
+allow bluetooth tmpfs:file { getattr ioctl read write map };
+# Extractor buffers live in mediaextractor_tmpfs. mediaserver is the reader.
+allow mediaserver mediaextractor_tmpfs:file { getattr read write map };
+
+# The software decoder's FMQ is created by mediaswcodec. system_server
+# plays touch and notification sounds, and mediaserver plays ringtones
+# through NuPlayer. Both run the vorbis decoder thread in their own
+# process, so both have to read that queue. A generic tmpfs file is s0,
+# which an app's MLS categories cannot write.
+type mediaswcodec_tmpfs, file_type, mlstrustedobject;
+type_transition mediaswcodec tmpfs:file mediaswcodec_tmpfs;
+allow mediaswcodec mediaswcodec_tmpfs:file { getattr ioctl read write map };
+allow appdomain mediaswcodec_tmpfs:file { getattr read write map };
+allow { system_server mediaserver } mediaswcodec_tmpfs:file { getattr read write map };
+
+# SoundPool passes audioserver a MemoryHeapBase memfd created by the app.
+# appdomain_tmpfs is exempt from the MLS level check.
+allow audioserver appdomain_tmpfs:file { getattr read write map };

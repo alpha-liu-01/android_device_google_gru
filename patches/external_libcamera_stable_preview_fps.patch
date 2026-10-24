@@ -1,0 +1,54 @@
+--- a/src/android/camera_device.cpp
++++ b/src/android/camera_device.cpp
+@@ -1068,7 +1068,12 @@
+ 		const int32_t *data = entry.data.i32;
+ 		controls.set(controls::draft::FaceDetectMode, data[0]);
+ 		if (!controls.get(controls::draft::FaceDetectMode)) {
+-			LOG(HAL, Warning) << "Pipeline doesn't support controls::draft::FaceDetectMode";
++			static bool logged = false;
++			if (!logged) {
++				logged = true;
++				LOG(HAL, Warning)
++					<< "Pipeline doesn't support controls::draft::FaceDetectMode";
++			}
+ 		}
+ 	}
+ 
+@@ -1089,7 +1094,11 @@
+ 		const uint8_t *data = entry.data.u8;
+ 		controls.set(controls::Mode3A, data[0]);
+ 		if (!controls.get(controls::Mode3A)) {
+-			LOG(HAL, Warning) << "Pipeline doesn't support controls::Mode3A";
++			static bool logged = false;
++			if (!logged) {
++				logged = true;
++				LOG(HAL, Warning) << "Pipeline doesn't support controls::Mode3A";
++			}
+ 		}
+ 	}
+ 
+@@ -1186,9 +1195,21 @@
+ 
+ 	if (settings.getEntry(ANDROID_CONTROL_AE_TARGET_FPS_RANGE, &entry)) {
+ 		const int32_t *data = entry.data.i32;
+-		int64_t maxFrameDuration = 1'000'000 / static_cast<int64_t>(data[0]);
+-		int64_t minFrameDuration = 1'000'000 / static_cast<int64_t>(data[1]);
+-		controls.set(controls::FrameDurationLimits, { minFrameDuration, maxFrameDuration });
++		int32_t minFps = data[0];
++		int32_t maxFps = data[1];
++		/*
++		 * A range such as [20, 30] lets AE stretch the frame to 50 ms
++		 * indoors. The viewfinder and recorded video then run at the
++		 * bottom of the range. Lock to the upper bound.
++		 */
++		if (maxFps >= 24 && minFps < maxFps)
++			minFps = maxFps;
++		if (minFps > 0 && maxFps > 0) {
++			int64_t maxFrameDuration = 1'000'000 / static_cast<int64_t>(minFps);
++			int64_t minFrameDuration = 1'000'000 / static_cast<int64_t>(maxFps);
++			controls.set(controls::FrameDurationLimits,
++				     { minFrameDuration, maxFrameDuration });
++		}
+ 	}
+ 
+ 	if (settings.getEntry(ANDROID_CONTROL_AF_MODE, &entry)) {

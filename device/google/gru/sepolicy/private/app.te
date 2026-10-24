@@ -1,0 +1,3 @@
+# Runtimes read /proc/sys/vm/max_map_count to size their heap. It is a
+# single global integer, not a credential or a per-process map.
+allow appdomain proc_max_map_count:file r_file_perms;

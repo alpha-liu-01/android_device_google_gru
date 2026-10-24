@@ -1,0 +1,54 @@
+--- a/src/libcamera/pipeline/rkisp1/rkisp1.cpp
++++ b/src/libcamera/pipeline/rkisp1/rkisp1.cpp
+@@ -109,6 +109,14 @@
+ 
+ 	RkISP1MainPath *mainPath_;
+ 	RkISP1SelfPath *selfPath_;
++	/*
++	 * Frames dequeued while the ISP color gains are still the reset
++	 * value (green gain 0). The first of those is split: the part of
++	 * the frame already in flight stays magenta. Each path drops this
++	 * many buffers after start before a request is completed.
++	 */
++	unsigned int mainPathWarmup_ = 0;
++	unsigned int selfPathWarmup_ = 0;
+ 
+ 	std::unique_ptr<ipa::rkisp1::IPAProxyRkISP1> ipa_;
+ 
+@@ -943,6 +951,8 @@
+ 	data->frame_ = 0;
+ 	data->lastTimestamp_ = 0;
+ 	data->delayedCtrls_->reset();
++	data->mainPathWarmup_ = 2;
++	data->selfPathWarmup_ = hasSelfPath_ ? 2 : 0;
+ 
+ 	if (!isRaw_) {
+ 		ret = param_->streamOn();
+@@ -1305,6 +1315,27 @@
+ 	Request *request = buffer->request();
+ 
+ 	if (metadata.status != FrameMetadata::FrameCancelled) {
++		unsigned int *warmup = nullptr;
++		RkISP1Path *path = nullptr;
++		if (buffer == info->mainPathBuffer && data->mainPathWarmup_) {
++			warmup = &data->mainPathWarmup_;
++			path = data->mainPath_;
++		} else if (buffer == info->selfPathBuffer && data->selfPathWarmup_) {
++			warmup = &data->selfPathWarmup_;
++			path = data->selfPath_;
++		}
++		if (warmup) {
++			--*warmup;
++			if (path->queueBuffer(buffer) == 0) {
++				LOG(RkISP1, Debug)
++					<< "Dropping ISP warmup frame on "
++					<< (path == data->mainPath_ ? "main" : "self")
++					<< " path";
++				return;
++			}
++			LOG(RkISP1, Warning) << "Failed to requeue ISP warmup frame";
++		}
++
+ 		notifyShutterUpTo(info, metadata.timestamp);
+ 
+ 		if (isRaw_) {

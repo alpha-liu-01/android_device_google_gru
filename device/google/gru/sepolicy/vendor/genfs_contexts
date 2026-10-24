@@ -1,0 +1,27 @@
+# /sys/class/backlight is a symlink. genfscon matches the real device path.
+genfscon sysfs /devices/platform/backlight u:object_r:vendor_sysfs_backlight:s0
+
+# Battery. The wakeup node under it keeps the wakeup label so system_suspend
+# can still read the source name.
+genfscon sysfs /devices/platform/ff200000.spi/spi_master/spi2/spi2.0/ff200000.spi:ec@0:i2c-tunnel/i2c-9/9-000b/power_supply/sbs-9-000b/wakeup u:object_r:sysfs_wakeup:s0
+genfscon sysfs /devices/platform/ff200000.spi/spi_master/spi2/spi2.0/ff200000.spi:ec@0:i2c-tunnel/i2c-9/9-000b/power_supply u:object_r:sysfs_batteryinfo:s0
+genfscon sysfs /devices/platform/ff200000.spi/spi_master/spi2/spi2.0/cros-ec-dev.0.auto/cros-usbpd-charger.3.auto/power_supply u:object_r:sysfs_batteryinfo:s0
+
+# Chrome EC accelerometer and gyroscope.
+genfscon sysfs /bus/iio u:object_r:vendor_sysfs_iio:s0
+genfscon sysfs /devices/platform/ff200000.spi/spi_master/spi2/spi2.0/cros-ec-dev.0.auto/cros-ec-sensorhub.1.auto u:object_r:vendor_sysfs_iio:s0
+
+# DRM hotplug and Panfrost. surfaceflinger and hwcomposer already have sysfs_gpu.
+# display-subsystem is created before the policy is loaded; its uevent inode
+# stays type sysfs, which is why surfaceflinger also has a sysfs:file read.
+genfscon sysfs /devices/platform/display-subsystem u:object_r:sysfs_gpu:s0
+genfscon sysfs /devices/platform/ff9a0000.gpu u:object_r:sysfs_gpu:s0
+
+# V4L2 / media controller (camera and rkvdec).
+genfscon sysfs /bus/media u:object_r:sysfs_v4l:s0
+genfscon sysfs /class/video4linux u:object_r:sysfs_v4l:s0
+genfscon sysfs /devices/platform/ff650000.video-codec u:object_r:sysfs_v4l:s0
+genfscon sysfs /devices/platform/ff660000.video-codec u:object_r:sysfs_v4l:s0
+
+# External microSD. storaged reads stat; init writes discard_max_bytes.
+genfscon sysfs /devices/platform/fe320000.mmc u:object_r:sysfs_devices_block:s0

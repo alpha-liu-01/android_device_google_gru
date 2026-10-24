@@ -156,7 +156,7 @@ index 77e4f65..0701a06 100644
  }
  
 diff --git a/audio/aidl/default/primary/StreamPrimary.cpp b/audio/aidl/default/primary/StreamPrimary.cpp
-index 8455680..ab11bde 100644
+index 8455680..5a79b5c 100644
 --- a/audio/aidl/default/primary/StreamPrimary.cpp
 +++ b/audio/aidl/default/primary/StreamPrimary.cpp
 @@ -98,6 +98,11 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
@@ -207,7 +207,27 @@ index 8455680..ab11bde 100644
          auto streamDataProcessor = getContext().getStreamDataProcessor().lock();
          if (streamDataProcessor != nullptr) {
              streamDataProcessor->setAudioDevice(devices[0]);
-@@ -182,14 +210,22 @@ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
+@@ -176,20 +204,41 @@ bool StreamPrimary::isStubStream() {
+ // static
+ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
+         const std::vector<AudioDevice>& devices) {
+-    if (devices.empty() || devices[0].address.getTag() != AudioDeviceAddress::id) {
++    if (devices.empty()) {
++        return kDefaultCardAndDeviceId;
++    }
++    /* DP Alt Mode is pcmC0D3p. The framework connects HDMI with an empty
++     * address, so CARD_N_DEV_M is not present on this device.
++     */
++    if (devices[0].type.connection == AudioDeviceDescription::CONNECTION_HDMI) {
++        int hdmiDev = ::android::base::GetIntProperty(
++                "ro.vendor.audio.hdmi.alsa_device", 3);
++        if (hdmiDev >= 0) {
++            return {kDefaultCardAndDeviceId.first, hdmiDev};
++        }
++    }
++    if (devices[0].address.getTag() != AudioDeviceAddress::id) {
+         return kDefaultCardAndDeviceId;
+     }
      std::string deviceAddress = devices[0].address.get<AudioDeviceAddress::id>();
      AlsaDeviceId cardAndDeviceId;
      if (const size_t suffixPos = deviceAddress.rfind("CARD_");
@@ -249,3 +269,38 @@ index 9b10432..b542f2e 100644
  
  ndk::ScopedAStatus StreamUsb::setConnectedDevices(
          const std::vector<AudioDevice>& connectedDevices) {
+diff --git a/audio/aidl/default/ModulePrimary.cpp b/audio/aidl/default/ModulePrimary.cpp
+index 6648068..a5ad9be 100644
+--- a/audio/aidl/default/ModulePrimary.cpp
++++ b/audio/aidl/default/ModulePrimary.cpp
+@@ -129,4 +129,16 @@ int32_t ModulePrimary::getNominalLatencyMs(const AudioPortConfig& portConfig) {
+     return hasMmapFlag(portConfig.flags.value()) ? kLowLatencyMs : kStandardLatencyMs;
+ }
+ 
++ndk::ScopedAStatus ModulePrimary::populateConnectedDevicePort(AudioPort* audioPort, int32_t) {
++    // HDMI and the analog headset are declared with static profiles. The base
++    // implementation rejects every external device, so the DP jack never becomes
++    // an available output.
++    if (audioPort->ext.getTag() == AudioPortExt::device && !audioPort->profiles.empty()) {
++        LOG(DEBUG) << __func__ << ": keeping declared profiles for "
++                   << audioPort->ext.get<AudioPortExt::device>().device.toString();
++        return ndk::ScopedAStatus::ok();
++    }
++    return Module::populateConnectedDevicePort(audioPort, 0);
++}
++
+ }  // namespace aidl::android::hardware::audio::core
+diff --git a/audio/aidl/default/include/core-impl/ModulePrimary.h b/audio/aidl/default/include/core-impl/ModulePrimary.h
+index c93deed..1ada4c2 100644
+--- a/audio/aidl/default/include/core-impl/ModulePrimary.h
++++ b/audio/aidl/default/include/core-impl/ModulePrimary.h
+@@ -27,6 +27,9 @@ class ModulePrimary final : public Module {
+ 
+   protected:
+     ndk::ScopedAStatus getTelephony(std::shared_ptr<ITelephony>* _aidl_return) override;
++    ndk::ScopedAStatus populateConnectedDevicePort(
++            ::aidl::android::media::audio::common::AudioPort* audioPort,
++            int32_t nextPortId) override;
+ 
+     ndk::ScopedAStatus calculateBufferSizeFrames(
+             const ::aidl::android::media::audio::common::AudioFormatDescription& format,

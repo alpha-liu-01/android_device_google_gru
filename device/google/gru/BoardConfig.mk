@@ -53,7 +53,10 @@ BUILD_BROKEN_ELF_PREBUILT_PRODUCT_COPY_FILES := true
 
 # Depthcharge has no bootconfig. The FIT cmdline is cmdline.txt.
 # Mainline common adds binder.impl=rust; this kernel does not have it.
-BOARD_KERNEL_CMDLINE := console=tty0 loglevel=7 deferred_probe_timeout=30 security=selinux androidboot.selinux=permissive androidboot.hardware=gru androidboot.boot_devices=fe320000.mmc printk.devkmsg=on
+BOARD_KERNEL_CMDLINE := console=tty0 loglevel=4 deferred_probe_timeout=30 security=selinux androidboot.selinux=enforcing androidboot.hardware=gru androidboot.boot_devices=fe320000.mmc printk.devkmsg=on
+
+BOARD_VENDOR_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/vendor
+SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += $(DEVICE_PATH)/sepolicy/private
 BOARD_BOOTCONFIG :=
 
 DEVICE_MANIFEST_FILE := $(DEVICE_PATH)/manifest.xml

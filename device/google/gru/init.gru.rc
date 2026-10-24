@@ -106,18 +106,11 @@ on early-init
     # aborts when sys.usb.controller is empty. init.mainline.usb.rc would
     # otherwise set configfs to 2 and restart that HAL forever.
     setprop vendor.usb.configfs 0
-    # No /dev/ashmem on this kernel. libcutils creates a memfd instead when
-    # this is set before zygote starts.
-    setprop sys.use_memfd true
+    # sys.use_memfd and sys.brightness.disable_gamma_conversion are system
+    # properties. They are set from the product makefile. vendor_init cannot
+    # set them once SELinux is enforcing.
     setprop debug.renderengine.backend skiaglthreaded
     setprop debug.hwui.renderer skiagl
-    # pwm_bl.c generates a 4096-step CIE 1931 cubic curve when DT omits
-    # brightness-levels, so /sys/class/backlight/backlight/brightness is
-    # already perceptually linear. Skip Android's second HLG gamma curve.
-    setprop sys.brightness.disable_gamma_conversion true
-    # bootanim holds several cores on SwiftShader and SystemUI then misses
-    # its startup deadline. The animation is not what this panel shows.
-    setprop debug.sf.nobootanimation 1
 
 on init
     write /sys/block/zram0/comp_algorithm lz4
@@ -185,20 +178,16 @@ on zygote-start
 on boot && property:service.adb.tcp.port=5555
     start adbd
 
-# Console loglevel 7 would paint kernel warnings back onto the panel if
-# fbcon is still bound. kmsg itself is unchanged.
+# Drop the console to warnings after the UI is up. The cmdline starts at 4.
 on property:sys.boot_completed=1
-    exec_background - root root -- /system/bin/pm enable com.android.bluetooth
-    exec_background - root root -- /system/bin/settings put system screen_off_timeout 86400000
-    exec_background - root root -- /system/bin/settings put secure show_ime_with_hard_keyboard 1
-    exec_background - root root -- /system/bin/settings put global override_desktop_experience_features 1
+    # /system/bin/sh is shell_exec and transitions to shell. The tools themselves
+    # are system_file, which init is not allowed to execute in its own domain.
+    exec_background - root root -- /system/bin/sh -c "/system/bin/pm enable com.android.bluetooth"
+    exec_background - root root -- /system/bin/sh /vendor/bin/boot_settings.sh
+    exec_background - root root -- /system/bin/sh -c "/system/bin/settings put secure show_ime_with_hard_keyboard 1"
+    exec_background - root root -- /system/bin/sh -c "/system/bin/settings put global override_desktop_experience_features 1"
     exec_background - root audio -- /system/bin/tinymix2 -D 0 set "Out DAIR Mux" 0
     write /proc/sys/kernel/printk "3 4 1 3"
-
-# usbd only talks to IUsbGadget. With configfs left at 0 that service is
-# never registered, and usbd retries it on every boot.
-on property:init.svc.usbd=running
-    stop usbd
 
 service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
                        -O/data/vendor/wifi/wpa/sockets \
@@ -211,18 +200,9 @@ service wpa_supplicant /vendor/bin/hw/wpa_supplicant \
     oneshot
     user root
 
-service expand_userdata /system/bin/sh /vendor/bin/expand_userdata.sh
+service expand_userdata /vendor/bin/expand_userdata.sh
     class core
     user root
     group root system
     disabled
     oneshot
-    seclabel u:r:init:s0
-
-# system_server's Java exception never reaches kmsg by itself. The script
-# keeps a copy on /data and mirrors the same lines to kmsg one at a time.
-service gru_logcat /system/bin/sh /vendor/bin/gru-logcat.sh
-    class core
-    user root
-    group root system log readproc
-    seclabel u:r:init:s0

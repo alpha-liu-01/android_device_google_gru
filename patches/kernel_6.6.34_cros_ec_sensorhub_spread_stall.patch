@@ -1,0 +1,184 @@
+--- a/drivers/platform/chrome/cros_ec_sensorhub_ring.c
++++ b/drivers/platform/chrome/cros_ec_sensorhub_ring.c
+@@ -35,6 +35,18 @@
+ /* To measure by how much the filter is overshooting, if it happens. */
+ #define FUTURE_TS_ANALYTICS_COUNT_MAX 100
+ 
++/*
++ * Used when the EC timestamp does not move (FIFO overflow after a long
++ * suspend). 100 Hz matches the usual motion-sense batch.
++ */
++#define CROS_EC_SENSORHUB_FALLBACK_PERIOD_NS (10LL * NSEC_PER_MSEC)
++
++/*
++ * A sample this far behind the newest one is a suspend or FIFO overflow,
++ * not the tail of the current batch. Real batches are tens of milliseconds.
++ */
++#define CROS_EC_SENSORHUB_BATCH_GAP_NS (NSEC_PER_SEC)
++
+ static inline int
+ cros_sensorhub_send_sample(struct cros_ec_sensorhub *sensorhub,
+ 			   struct cros_ec_sensors_ring_sample *sample)
+@@ -359,16 +371,31 @@
+ 					     *sample)
+ {
+ 	const u8 sensor_id = sample->sensor_id;
++	struct cros_ec_sensors_ts_batch_state *state =
++		&sensorhub->batch_state[sensor_id];
++	s64 newest = state->newest_sensor_event;
++
++	/*
++	 * Hours-old samples show up together after resume. Pinning them to
++	 * last_ts makes the rest of the FIFO share one timestamp, and the
++	 * spreader then drops them until the next reboot.
++	 */
++	if (newest > sample->timestamp &&
++	    newest - sample->timestamp > CROS_EC_SENSORHUB_BATCH_GAP_NS) {
++		state->newest_sensor_event = sample->timestamp;
++		state->last_ts = 0;
++		state->last_len = 0;
++		state->penul_ts = 0;
++		state->penul_len = 0;
++		return;
++	}
+ 
+ 	/* If this event is earlier than one we saw before... */
+-	if (sensorhub->batch_state[sensor_id].newest_sensor_event >
+-	    sample->timestamp)
++	if (newest > sample->timestamp)
+ 		/* mark it for spreading. */
+-		sample->timestamp =
+-			sensorhub->batch_state[sensor_id].last_ts;
++		sample->timestamp = state->last_ts;
+ 	else
+-		sensorhub->batch_state[sensor_id].newest_sensor_event =
+-			sample->timestamp;
++		state->newest_sensor_event = sample->timestamp;
+ }
+ 
+ /**
+@@ -507,6 +534,60 @@
+ }
+ 
+ /*
++ * The EC timestamp did not advance, so the samples cannot be spread against
++ * the previous batch. Push the newest one at last_ts + one period and leave
++ * a one-sample anchor. Remembering the whole batch (last_len = batch_len,
++ * penul_len = 0) makes every later sample rewind into the same drop.
++ */
++static struct cros_ec_sensors_ring_sample *
++cros_ec_sensor_ring_emit_forward(struct cros_ec_sensorhub *sensorhub, int id,
++				 struct cros_ec_sensors_ring_sample *first,
++				 struct cros_ec_sensors_ring_sample *last_out)
++{
++	struct cros_ec_sensors_ts_batch_state *st = &sensorhub->batch_state[id];
++	struct cros_ec_sensors_ring_sample *s, *last = NULL, *end = first;
++	s64 base, ts;
++	int dropped = 0;
++
++	for (s = first; s < last_out; s++) {
++		if (s->sensor_id != id)
++			continue;
++		if (s->flag & MOTIONSENSE_SENSOR_FLAG_FLUSH)
++			break;
++		if (last && s->timestamp != last->timestamp)
++			break;
++		last = s;
++		end = s;
++		dropped++;
++	}
++
++	base = st->last_ts;
++	if (last && last->timestamp > base)
++		base = last->timestamp;
++	if (base < CROS_EC_SENSORHUB_FALLBACK_PERIOD_NS)
++		base = cros_ec_get_time_ns();
++	ts = base + CROS_EC_SENSORHUB_FALLBACK_PERIOD_NS;
++
++	if (last) {
++		last->timestamp = ts;
++		cros_sensorhub_send_sample(sensorhub, last);
++		dropped--;
++	}
++	if (dropped > 0)
++		dev_warn_ratelimited(sensorhub->dev,
++				     "Sensor %d: lost %d samples when spreading\n",
++				     id, dropped);
++
++	st->penul_ts = ts - CROS_EC_SENSORHUB_FALLBACK_PERIOD_NS;
++	st->penul_len = 1;
++	st->last_ts = ts;
++	st->last_len = 1;
++	if (st->newest_sensor_event < ts)
++		st->newest_sensor_event = ts;
++	return end + 1;
++}
++
++/*
+  * cros_ec_sensor_ring_spread_add: Calculate proper timestamps then add to
+  *                                 ringbuffer.
+  *
+@@ -582,16 +663,17 @@
+ 
+ 			if (batch_start->timestamp <=
+ 			    sensorhub->batch_state[id].last_ts) {
+-				batch_timestamp =
+-					sensorhub->batch_state[id].last_ts;
+-				batch_len = sensorhub->batch_state[id].last_len;
+-
+-				sample_idx = batch_len;
+-
+-				sensorhub->batch_state[id].last_ts =
+-				  sensorhub->batch_state[id].penul_ts;
+-				sensorhub->batch_state[id].last_len =
+-				  sensorhub->batch_state[id].penul_len;
++				/*
++				 * EC time did not move. Rewinding onto
++				 * penul_len == 0 drops this batch and every
++				 * batch after it. Push the newest sample one
++				 * period ahead and keep a one-sample anchor.
++				 */
++				next_batch_start =
++					cros_ec_sensor_ring_emit_forward(
++						sensorhub, id, batch_start,
++						last_out);
++				continue;
+ 			} else {
+ 				/*
+ 				 * Push first sample in the batch to the,
+@@ -626,22 +708,25 @@
+ 			if (batch_len == 1)
+ 				goto done_with_this_batch;
+ 
+-			/* Can we calculate period? */
++			/*
++			 * last_len == 0 after FIFO overflow or resume. The
++			 * first sample of this batch was already pushed.
++			 * Anchor on the newest remaining sample instead of
++			 * recording the whole backlog as last_len.
++			 */
+ 			if (sensorhub->batch_state[id].last_len == 0) {
+-				dev_warn(sensorhub->dev, "Sensor %d: lost %d samples when spreading\n",
+-					 id, batch_len - 1);
+-				goto done_with_this_batch;
+-				/*
+-				 * Note: we're dropping the rest of the samples
+-				 * in this batch since we have no idea where
+-				 * they're supposed to go without a period
+-				 * calculation.
+-				 */
++				next_batch_start =
++					cros_ec_sensor_ring_emit_forward(
++						sensorhub, id, batch_start,
++						last_out);
++				continue;
+ 			}
+ 
+ 			sample_period = div_s64(batch_timestamp -
+ 				sensorhub->batch_state[id].last_ts,
+ 				sensorhub->batch_state[id].last_len);
++			if (sample_period <= 0)
++				sample_period = CROS_EC_SENSORHUB_FALLBACK_PERIOD_NS;
+ 			dev_dbg(sensorhub->dev,
+ 				"Adjusting %d samples, sensor %d last_batch @%lld (%d samples) batch_timestamp=%lld => period=%lld\n",
+ 				batch_len, id,

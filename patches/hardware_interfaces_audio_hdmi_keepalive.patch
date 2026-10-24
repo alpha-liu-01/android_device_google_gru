@@ -1,0 +1,127 @@
+--- a/audio/aidl/default/alsa/StreamAlsa.cpp
++++ b/audio/aidl/default/alsa/StreamAlsa.cpp
+@@ -15,7 +15,9 @@
+  */
+ 
+ #include <cmath>
++#include <cstdint>
+ #include <limits>
++#include <vector>
+ 
+ #define LOG_TAG "AHAL_StreamAlsa"
+ #include <android-base/logging.h>
+@@ -41,6 +43,7 @@
+       mReadWriteRetries(readWriteRetries) {}
+ 
+ StreamAlsa::~StreamAlsa() {
++    stopSilence();
+     cleanupWorker();
+ }
+ 
+@@ -95,11 +98,19 @@
+ }
+ 
+ ::android::status_t StreamAlsa::standby() {
++    if (keepPcmOpenOnStandby() && !mAlsaDeviceProxies.empty()) {
++        if (!mSilenceRunning.exchange(true)) {
++            LOG(INFO) << __func__ << ": holding PCM open";
++            mSilenceThread = std::thread(&StreamAlsa::silenceThread, this);
++        }
++        return ::android::OK;
++    }
+     teardownIo();
+     return ::android::OK;
+ }
+ 
+ ::android::status_t StreamAlsa::start() {
++    stopSilence();
+     if (!mAlsaDeviceProxies.empty()) {
+         // This is a resume after a pause.
+         return ::android::OK;
+@@ -329,7 +340,30 @@
+     }
+ }
+ 
++void StreamAlsa::stopSilence() {
++    mSilenceRunning = false;
++    if (mSilenceThread.joinable()) mSilenceThread.join();
++}
++
++void StreamAlsa::silenceThread() {
++    const size_t frames = mBufferSizeFrames > 480 ? 480 : mBufferSizeFrames;
++    if (frames == 0 || mFrameSizeBytes == 0) return;
++    std::vector<uint8_t> silence(frames * mFrameSizeBytes, 0);
++    while (mSilenceRunning) {
++        bool wrote = false;
++        for (const auto& proxy : mAlsaDeviceProxies) {
++            if (!mSilenceRunning) return;
++            if (proxy_write_with_retries(proxy.get(), silence.data(), silence.size(),
++                                         mReadWriteRetries) == 0) {
++                wrote = true;
++            }
++        }
++        if (!wrote && mSilenceRunning) usleep(10000);
++    }
++}
++
+ void StreamAlsa::teardownIo() {
++    stopSilence();
+     mIoThreadIsRunning = false;
+     if (mIsInput) {
+         LOG(DEBUG) << __func__ << ": shutting down pipes";
+--- a/audio/aidl/default/include/core-impl/StreamAlsa.h
++++ b/audio/aidl/default/include/core-impl/StreamAlsa.h
+@@ -55,6 +55,9 @@
+   protected:
+     // Called from 'start' to initialize 'mAlsaDeviceProxies', the vector must be non-empty.
+     virtual std::vector<alsa::DeviceProfile> getDeviceProfiles() = 0;
++    // DP Alt Mode resets its audio packetizer on PCM close. The sink then
++    // takes about a second to lock, so short sounds never come out.
++    virtual bool keepPcmOpenOnStandby() const { return false; }
+ 
+     const size_t mBufferSizeFrames;
+     const size_t mFrameSizeBytes;
+@@ -69,6 +72,8 @@
+     ::android::sp<::android::MonoPipeReader> makeSource(::android::MonoPipe* pipe);
+     void inputIoThread(size_t idx);
+     void outputIoThread(size_t idx);
++    void silenceThread();
++    void stopSilence();
+     void teardownIo();
+ 
+     std::atomic<float> mGain = 1.0;
+@@ -80,6 +85,9 @@
+     std::vector<::android::sp<::android::MonoPipeReader>> mSources;
+     std::vector<std::thread> mIoThreads;
+     std::atomic<bool> mIoThreadIsRunning = false;  // used by all threads
++    // Writes zeros so the HDMI PCM stays running across standby.
++    std::thread mSilenceThread;
++    std::atomic<bool> mSilenceRunning = false;
+ };
+ 
+ }  // namespace aidl::android::hardware::audio::core
+--- a/audio/aidl/default/include/core-impl/StreamPrimary.h
++++ b/audio/aidl/default/include/core-impl/StreamPrimary.h
+@@ -67,6 +67,7 @@
+             const std::vector<::aidl::android::media::audio::common::AudioDevice>& devices);
+     static bool useStubStream(bool isInput,
+                               const ::aidl::android::media::audio::common::AudioDevice& device);
++    bool keepPcmOpenOnStandby() const override;
+ 
+     bool isStubStreamOnWorker() const { return mCurrAlsaDeviceId == kStubDeviceId; }
+ 
+--- a/audio/aidl/default/primary/StreamPrimary.cpp
++++ b/audio/aidl/default/primary/StreamPrimary.cpp
+@@ -84,6 +84,12 @@
+     return isStubStreamOnWorker() ? mStubDriver.standby() : StreamAlsa::standby();
+ }
+ 
++bool StreamPrimary::keepPcmOpenOnStandby() const {
++    const int hdmiDev = ::android::base::GetIntProperty("ro.vendor.audio.hdmi.alsa_device", 3);
++    return !mIsInput && hdmiDev >= 0 && mCurrAlsaDeviceId.first >= 0 &&
++           mCurrAlsaDeviceId.second == hdmiDev;
++}
++
+ ::android::status_t StreamPrimary::start() {
+     bool isStub = true, shutdownAlsaStream = false;
+     {

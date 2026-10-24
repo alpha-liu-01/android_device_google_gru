@@ -88,4 +88,7 @@
     -->
     <integer name="config_defaultRefreshRate">61</integer>
 
+    <!-- DP jack is an input switch (SW_LINEOUT|SW_VIDEOOUT), not an extcon. -->
+    <bool name="config_useDevInputEventForAudioJack">true</bool>
+
 </resources>

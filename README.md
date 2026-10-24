@@ -52,20 +52,20 @@ The Depthcharge FIT kernel image (`vmlinuz.kpart`) bundles all 5 mainline `rk339
 
 Download the latest release `.zip` and `.zip.sha256` files from the GitHub Releases page (or from `out/target/product/gru/` if built locally):
 
-- **Release Archive**: `lineage-23.2-gru-20261021.zip` (`990 MiB` compressed / `10.5 GiB` unpacked)
+- **Release Archive**: `lineage-23.2-gru-20261022.zip` (`990 MiB` compressed / `10.5 GiB` unpacked)
 - **SHA-256 Checksum**:
   ```text
-  f8d8b447b1af5f5fbb5b0531372bb91a9cd129d8a251372fdb1796d2d42ee23d  lineage-23.2-gru-20261021.zip
+  00c03b5ac10bd3a9d55d47f943e24c1bde627d671a87742afef027c680feef1f  lineage-23.2-gru-20261022.zip
   ```
 
 Verify the checksum before flashing:
 - **Linux / macOS**:
   ```bash
-  sha256sum -c lineage-23.2-gru-20261021.zip.sha256
+  sha256sum -c lineage-23.2-gru-20261022.zip.sha256
   ```
 - **Windows (PowerShell)**:
   ```powershell
-  Get-FileHash .\lineage-23.2-gru-20261021.zip -Algorithm SHA256
+  Get-FileHash .\lineage-23.2-gru-20261022.zip -Algorithm SHA256
   ```
 
 ### Step 2: Flash the Image to the microSD Card
@@ -82,7 +82,7 @@ You can flash `lineage-23.2-gru-YYYYMMDD.zip` directly without manually extracti
   3. Select your microSD card target and click **Flash!**.
 - **Option C — Linux / macOS (`unzip` + `dd`)**:
   ```bash
-  unzip -p lineage-23.2-gru-20261021.zip | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+  unzip -p lineage-23.2-gru-20261022.zip | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
   ```
   *(Replace `/dev/sdX` or `/dev/mmcblkX` with your microSD card reader device).*
 

@@ -1,0 +1,16 @@
+# kdevtmpfs creates loop and dm nodes after the policy is loaded.
+# may_create() checks search+write+add_name on the directory, then
+# create on the new inode. ueventd restorecon relabels the node.
+# kdevtmpfs also mkdir's /dev/snd. create is the new directory inode.
+allow kernel device:dir { search write add_name remove_name create rmdir };
+allow kernel device:blk_file { getattr create setattr unlink };
+allow kernel device:chr_file { getattr create setattr unlink };
+
+# vfs_mknod() requires CAP_MKNOD. Platform policy only dontaudits it.
+allow kernel self:global_capability_class_set mknod;
+
+# gru-keep opens /dev/kmsg while it still lives on rootfs, before devtmpfs
+# covers /dev, and appends to /bootlog/gru-phase3.log, which has no label.
+# setenforce denies both, so the log stops around first-stage mount.
+allow kernel rootfs:chr_file { getattr read };
+allow kernel unlabeled:file { getattr open write append };

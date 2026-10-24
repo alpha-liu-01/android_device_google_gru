@@ -274,7 +274,7 @@ eMMC 安装单独做。29 GiB 的盘装不下 Trogdor 那份约 12 GiB 的 super
 
 Android 17 在阶段 4 或阶段 5 完成之后，把同一份 `device/google/gru` 换到新的 Lineage 源码树上，而不是现在另起一份移植。
 
-SELinux enforcing、从源码构建内核、安装和升级说明，放在有可重复 SD 镜像之后。
+SELinux 默认已经改成 enforcing。2026-10-23 实机进到桌面，设置里 SELinux 正在运行。打包用的 super `437a56cd` 和 FIT `6583c648` 已经拿掉常驻 kmsg 日志，开机 `loglevel` 改成 4，还没刷。从源码构建内核、安装和升级说明，仍放在有可重复 SD 镜像之后。
 
 ## 明确后做
 

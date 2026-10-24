@@ -1,0 +1,23 @@
+diff --git a/private/coredomain.te b/private/coredomain.te
+--- a/private/coredomain.te
++++ b/private/coredomain.te
+@@ -152,6 +152,10 @@ full_treble_only(`
+   # is created before the policy is loaded and stays type sysfs, so the
+   # genfscon for sysfs_gpu does not apply to it. Read stays allowed for
+   # surfaceflinger. Write does not.
++  # system_suspend reads wakeup counters through /sys/class/wakeup, which
++  # is a symlink into device directories that stay type sysfs.
++  # system_server InputReader reads the input device name and keyboard
++  # country the same way. Write stays forbidden.
+   neverallow {
+     coredomain
+     -apexd
+@@ -166,6 +170,8 @@ full_treble_only(`
+     -init
+     -ueventd
+     -surfaceflinger
++    -system_suspend
++    -system_server
+     is_flag_enabled(RELEASE_AVF_ENABLE_DEVICE_ASSIGNMENT, `-vfio_handler')
+     -vold
+   } sysfs:file { open read ioctl lock watch watch_mount watch_sb watch_with_perm watch_reads };

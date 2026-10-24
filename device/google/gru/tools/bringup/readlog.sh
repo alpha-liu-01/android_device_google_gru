@@ -49,6 +49,16 @@ if [ -n "$META_DEV" ]; then
     mount -o ro "$META_DEV" /mnt/gru-bootlog 2>/dev/null || true
     if mountpoint -q /mnt/gru-bootlog; then
         ls -la /mnt/gru-bootlog | tee -a "$OUT"
+        if [ -d /mnt/gru-bootlog/bootstat ]; then
+            say "=== metadata/bootstat ==="
+            ls -la /mnt/gru-bootlog/bootstat | tee -a "$OUT"
+            for f in /mnt/gru-bootlog/bootstat/*; do
+                [ -f "$f" ] || continue
+                say "--- $(basename "$f") ---"
+                cat "$f" | tee -a "$OUT"
+                say ""
+            done
+        fi
         if [ -f /mnt/gru-bootlog/expand_userdata.log ]; then
             say "=== expand_userdata.log ==="
             cat /mnt/gru-bootlog/expand_userdata.log | tee -a "$OUT"

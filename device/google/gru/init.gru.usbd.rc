@@ -1,0 +1,6 @@
+# usbd only talks to IUsbGadget. With configfs left at 0 that service is
+# never registered, and usbd retries it on every boot. This file lives in
+# system_ext so the trigger runs as init. vendor_init cannot read
+# init.svc.usbd.
+on property:init.svc.usbd=running
+    stop usbd

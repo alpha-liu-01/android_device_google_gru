@@ -85,6 +85,12 @@
                 </devicePort>
                 <devicePort tagName="BT SCO Headset" type="AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET" role="sink">
                 </devicePort>
+                <!-- pcmC0D3p, the SPDIF DAI wired to cdn-dp. Not attached:
+                     WiredAccessoryManager marks it available on the DP jack. -->
+                <devicePort tagName="HDMI Out" type="AUDIO_DEVICE_OUT_HDMI" role="sink">
+                    <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                             samplingRates="48000" channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
+                </devicePort>
 
                 <devicePort tagName="Built-In Mic" type="AUDIO_DEVICE_IN_BUILTIN_MIC" role="source" address="CARD_0_DEV_1">
                     <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
@@ -115,6 +121,8 @@
                 <route type="mix" sink="BT SCO"
                        sources="primary output"/>
                 <route type="mix" sink="BT SCO Headset"
+                       sources="primary output"/>
+                <route type="mix" sink="HDMI Out"
                        sources="primary output"/>
                 <route type="mix" sink="primary input"
                        sources="Built-In Mic,Wired Headset Mic,BT SCO Headset Mic"/>

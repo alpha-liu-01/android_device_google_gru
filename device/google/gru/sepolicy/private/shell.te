@@ -1,0 +1,2 @@
+# gru-logcat.sh is started via /system/bin/sh, which transitions here.
+allow shell kmsg_device:chr_file { getattr open write };

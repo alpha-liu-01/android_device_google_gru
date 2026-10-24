@@ -1,0 +1,219 @@
+diff --git a/audio/aidl/default/ModulePrimary.cpp b/audio/aidl/default/ModulePrimary.cpp
+--- a/audio/aidl/default/ModulePrimary.cpp
++++ b/audio/aidl/default/ModulePrimary.cpp
+@@ -20,6 +20,7 @@
+ #include <Utils.h>
+ #include <android-base/logging.h>
+ 
++#include "core-impl/GruAnalogMixer.h"
+ #include "core-impl/ModulePrimary.h"
+ #include "core-impl/StreamMmapStub.h"
+ #include "core-impl/StreamOffloadStub.h"
+@@ -35,6 +36,8 @@
+ using aidl::android::media::audio::common::AudioIoFlags;
+ using aidl::android::media::audio::common::AudioOffloadInfo;
+ using aidl::android::media::audio::common::AudioOutputFlags;
++using aidl::android::media::audio::common::AudioDeviceDescription;
++using aidl::android::media::audio::common::AudioDeviceType;
+ using aidl::android::media::audio::common::AudioPort;
+ using aidl::android::media::audio::common::AudioPortConfig;
+ using aidl::android::media::audio::common::AudioPortExt;
+@@ -140,4 +143,27 @@
+     }
+     return Module::populateConnectedDevicePort(audioPort, 0);
+ }
++
++void ModulePrimary::onExternalDeviceConnectionChanged(const AudioPort& audioPort, bool connected) {
++    // The base callback does nothing. setConnectedDevices() only runs when a
++    // stream is reconfigured, so plugging the jack left Headphones Switch off
++    // and the codec stayed silent after the speaker path muted.
++    if (audioPort.ext.getTag() != AudioPortExt::device) {
++        return;
++    }
++    const auto& description = audioPort.ext.get<AudioPortExt::device>().device.type;
++    if (description.connection != AudioDeviceDescription::CONNECTION_ANALOG) {
++        return;
++    }
++    const bool isInput = description.type == AudioDeviceType::IN_HEADSET;
++    const bool isOutput = description.type == AudioDeviceType::OUT_HEADPHONE ||
++                          description.type == AudioDeviceType::OUT_HEADSET;
++    if (isOutput) {
++        configureGruAnalogOutput(connected);
++    }
++    if (isInput) {
++        configureGruAnalogInput(connected);
++    }
++}
++
+ }  // namespace aidl::android::hardware::audio::core
+diff --git a/audio/aidl/default/include/core-impl/ModulePrimary.h b/audio/aidl/default/include/core-impl/ModulePrimary.h
+--- a/audio/aidl/default/include/core-impl/ModulePrimary.h
++++ b/audio/aidl/default/include/core-impl/ModulePrimary.h
+@@ -30,6 +30,10 @@
+     ndk::ScopedAStatus populateConnectedDevicePort(
+             ::aidl::android::media::audio::common::AudioPort* audioPort,
+             int32_t nextPortId) override;
++    void onExternalDeviceConnectionChanged(
++            const ::aidl::android::media::audio::common::AudioPort& audioPort,
++            bool connected) override;
++
+     ndk::ScopedAStatus calculateBufferSizeFrames(
+             const ::aidl::android::media::audio::common::AudioFormatDescription& format,
+             int32_t latencyMs, int32_t sampleRateHz, int32_t* bufferSizeFrames) override;
+diff --git a/audio/aidl/default/include/core-impl/GruAnalogMixer.h b/audio/aidl/default/include/core-impl/GruAnalogMixer.h
+--- a/audio/aidl/default/include/core-impl/GruAnalogMixer.h
++++ b/audio/aidl/default/include/core-impl/GruAnalogMixer.h
+@@ -0,0 +1,101 @@
++#pragma once
++
++extern "C" {
++#include <tinyalsa/asoundlib.h>
++}
++
++#include <android-base/logging.h>
++
++namespace aidl::android::hardware::audio::core {
++
++// DA7219 powers up with the headphone path open: MIXOUT_*_SELECT is 0, so
++// the DAC never reaches the mixer, and the DAC and headphone mute bits are
++// set. pcmC0D2 then plays into a muted codec while Speakers Switch is off.
++inline void configureGruAnalogOutput(bool headphone) {
++    struct mixer* mixer = mixer_open(0);
++    if (mixer == nullptr) {
++        LOG(ERROR) << __func__ << ": mixer_open failed";
++        return;
++    }
++    auto setValues = [mixer](const char* name, int val) {
++        struct mixer_ctl* ctl = mixer_get_ctl_by_name(mixer, name);
++        if (ctl == nullptr) {
++            LOG(ERROR) << __func__ << ": missing " << name;
++            return;
++        }
++        const unsigned count = mixer_ctl_get_num_values(ctl);
++        for (unsigned i = 0; i < count; ++i) {
++            if (mixer_ctl_set_value(ctl, i, val) != 0) {
++                LOG(ERROR) << __func__ << ": set " << name << " failed";
++                return;
++            }
++        }
++    };
++    auto setEnum = [mixer](const char* name, const char* value) {
++        struct mixer_ctl* ctl = mixer_get_ctl_by_name(mixer, name);
++        if (ctl == nullptr) {
++            LOG(ERROR) << __func__ << ": missing " << name;
++            return;
++        }
++        if (mixer_ctl_set_enum_by_string(ctl, value) != 0) {
++            LOG(ERROR) << __func__ << ": enum " << name << "=" << value << " failed";
++        }
++    };
++    setValues("Headphones Switch", headphone ? 1 : 0);
++    setValues("Speakers Switch", headphone ? 0 : 1);
++    if (headphone) {
++        setEnum("Out DACL Mux", "DAIL");
++        setEnum("Out DACR Mux", "DAIR");
++        setValues("Mixer Out FilterL DACL Switch", 1);
++        setValues("Mixer Out FilterR DACR Switch", 1);
++        setValues("ST Mixer Out FilterL Out FilterL Switch", 1);
++        setValues("ST Mixer Out FilterR Out FilterR Switch", 1);
++        setValues("Playback Digital Switch", 1);
++        setValues("Headphone Switch", 1);
++        setValues("Headphone Volume", 57);
++    }
++    mixer_close(mixer);
++    LOG(INFO) << __func__ << ": headphone=" << headphone;
++}
++
++// Out DAIR Mux must stay on ADC. The tone-generator default drives the
++// shared I2S0 data line and zeros the built-in mic.
++inline void configureGruAnalogInput(bool headsetMic) {
++    struct mixer* mixer = mixer_open(0);
++    if (mixer == nullptr) {
++        LOG(ERROR) << __func__ << ": mixer_open failed";
++        return;
++    }
++    auto setValues = [mixer](const char* name, int val) {
++        struct mixer_ctl* ctl = mixer_get_ctl_by_name(mixer, name);
++        if (ctl == nullptr) {
++            LOG(ERROR) << __func__ << ": missing " << name;
++            return;
++        }
++        const unsigned count = mixer_ctl_get_num_values(ctl);
++        for (unsigned i = 0; i < count; ++i) {
++            if (mixer_ctl_set_value(ctl, i, val) != 0) {
++                LOG(ERROR) << __func__ << ": set " << name << " failed";
++                return;
++            }
++        }
++    };
++    auto setEnum = [mixer](const char* name, const char* value) {
++        struct mixer_ctl* ctl = mixer_get_ctl_by_name(mixer, name);
++        if (ctl == nullptr) {
++            LOG(ERROR) << __func__ << ": missing " << name;
++            return;
++        }
++        if (mixer_ctl_set_enum_by_string(ctl, value) != 0) {
++            LOG(ERROR) << __func__ << ": enum " << name << "=" << value << " failed";
++        }
++    };
++    setEnum("Out DAIL Mux", "ADC");
++    setEnum("Out DAIR Mux", "ADC");
++    setValues("Headset Mic Switch", headsetMic ? 1 : 0);
++    setValues("Int Mic Switch", headsetMic ? 0 : 1);
++    mixer_close(mixer);
++    LOG(INFO) << __func__ << ": headsetMic=" << headsetMic;
++}
++
++}  // namespace aidl::android::hardware::audio::core
+diff --git a/audio/aidl/default/primary/StreamPrimary.cpp b/audio/aidl/default/primary/StreamPrimary.cpp
+--- a/audio/aidl/default/primary/StreamPrimary.cpp
++++ b/audio/aidl/default/primary/StreamPrimary.cpp
+@@ -25,6 +25,7 @@
+ #include <error/Result.h>
+ #include <error/expected_utils.h>
+ 
++#include "core-impl/GruAnalogMixer.h"
+ #include "core-impl/StreamPrimary.h"
+ 
+ using aidl::android::hardware::audio::common::SinkMetadata;
+@@ -152,34 +153,18 @@
+                    << devices.size();
+         return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+     }
+-    int cardId = kDefaultCardAndDeviceId.first;
+     {
+         const bool useStubDriver = devices.empty() || useStubStream(mIsInput, devices[0]);
+         std::lock_guard l(mLock);
+         mAlsaDeviceId = useStubDriver ? kStubDeviceId : getCardAndDeviceId(devices);
+-        if (mAlsaDeviceId.first >= 0) {
+-            cardId = mAlsaDeviceId.first;
+-        }
+     }
+     if (!devices.empty()) {
+-        if (struct mixer* m = mixer_open(cardId); m != nullptr) {
+-            auto setCtl = [m](const char* name, int val) {
+-                if (struct mixer_ctl* ctl = mixer_get_ctl_by_name(m, name); ctl != nullptr) {
+-                    mixer_ctl_set_value(ctl, 0, val);
+-                }
+-            };
+-            const bool isAnalog =
+-                    devices[0].type.connection == AudioDeviceDescription::CONNECTION_ANALOG;
+-            if (mIsInput) {
+-                setCtl("Out DAIL Mux", 0);
+-                setCtl("Out DAIR Mux", 0);
+-                setCtl("Headset Mic Switch", isAnalog ? 1 : 0);
+-                setCtl("Int Mic Switch", isAnalog ? 0 : 1);
+-            } else {
+-                setCtl("Headphones Switch", isAnalog ? 1 : 0);
+-                setCtl("Speakers Switch", isAnalog ? 0 : 1);
+-            }
+-            mixer_close(m);
++        const bool isAnalog =
++                devices[0].type.connection == AudioDeviceDescription::CONNECTION_ANALOG;
++        if (mIsInput) {
++            configureGruAnalogInput(isAnalog);
++        } else {
++            configureGruAnalogOutput(isAnalog);
+         }
+         auto streamDataProcessor = getContext().getStreamDataProcessor().lock();
+         if (streamDataProcessor != nullptr) {

@@ -1,0 +1,4 @@
+# /sys/class/wakeup points at device wakeup directories. Those directories
+# stay type sysfs, so the platform sysfs_wakeup allow does not cover the
+# counters system_suspend reads (name, active_count, total_time_ms, ...).
+allow system_suspend sysfs:file r_file_perms;

@@ -67,6 +67,8 @@ LINEAGE_PATCH_MAP=(
     "external/drm_hwcomposer:external_drm_hwcomposer_prefer_wide_crtc.patch"
     "external/google-highway:external_google-highway_vendor_available.patch"
     "external/libcamera:external_libcamera_rkisp1_camera_hal.patch"
+    "external/libcamera:external_libcamera_stable_preview_fps.patch"
+    "external/libcamera:external_libcamera_drop_isp_warmup_frames.patch"
     "external/minigbm:external_minigbm_rkvdec_nv12.patch"
     "external/minigbm-upstream:external_minigbm-upstream_rkvdec_nv12.patch"
     "external/minigbm-upstream:external_minigbm-upstream_rockchip_afbc.patch"
@@ -76,12 +78,18 @@ LINEAGE_PATCH_MAP=(
     "frameworks/av:frameworks_av_codec2_ion_fallback.patch"
     "frameworks/base:frameworks_base_brightness_and_settingslib.patch"
     "hardware/interfaces:hardware_interfaces_audio_usb_alsa_sync_io.patch"
+    "hardware/interfaces:hardware_interfaces_audio_analog_jack_mixer.patch"
+    "hardware/interfaces:hardware_interfaces_audio_builtin_mic_gain.patch"
+    "hardware/interfaces:hardware_interfaces_audio_hdmi_keepalive.patch"
     "packages/apps/Settings:packages_apps_Settings_hearing_aid_null_check.patch"
     "packages/modules/Connectivity:packages_modules_Connectivity_netlink_monitor_einval.patch"
     "packages/modules/NetworkStack:packages_modules_NetworkStack_restart_netlink_monitor.patch"
     "system/core:system_core_healthd_battery_monitor.patch"
     "system/core:system_core_libcutils_memfd_isolated_app.patch"
     "system/cros-codecs:system_cros-codecs_v4l2_stateless_fixes_and_ffi.patch"
+    "system/sepolicy:system_sepolicy_devtmpfs_kernel_device.patch"
+    "system/sepolicy:system_sepolicy_surfaceflinger_sysfs_uevent.patch"
+    "system/sepolicy:system_sepolicy_sysfs_read_suspend_input.patch"
 )
 
 for entry in "${LINEAGE_PATCH_MAP[@]}"; do
@@ -95,10 +103,12 @@ if [[ -n "${KERNEL_ROOT}" ]]; then
     echo "=== Applying Linux 6.6.34 kernel patches to ${KERNEL_ROOT} ==="
     KERNEL_PATCHES=(
         "kernel_6.6.34_cros_ec_keyb_s3_power_button_wakeup.patch"
+        "kernel_6.6.34_cros_ec_sensorhub_spread_stall.patch"
         "kernel_6.6.34_cros_usbpd_charger_online_notify.patch"
         "kernel_6.6.34_drm_master_and_fbdev_emulation.patch"
         "kernel_6.6.34_rkisp1_min_buffers_needed.patch"
         "kernel_6.6.34_rockchip_i2s_s3_mclk.patch"
+        "kernel_6.6.34_dp_audio_avout_jack.patch"
     )
     for kp in "${KERNEL_PATCHES[@]}"; do
         apply_patch "${KERNEL_ROOT}" "${PATCH_DIR}/${kp}"

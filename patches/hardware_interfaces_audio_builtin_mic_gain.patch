@@ -1,0 +1,50 @@
+--- a/audio/aidl/default/primary/StreamPrimary.cpp
++++ b/audio/aidl/default/primary/StreamPrimary.cpp
+@@ -16,6 +16,8 @@
+ 
+ #define LOG_TAG "AHAL_StreamPrimary"
+ 
++#include <algorithm>
++#include <cstdint>
+ #include <cstdio>
+ 
+ #include <android-base/logging.h>
+@@ -36,10 +38,22 @@
+ using aidl::android::media::audio::common::AudioDeviceType;
+ using aidl::android::media::audio::common::AudioOffloadInfo;
+ using aidl::android::media::audio::common::MicrophoneInfo;
++using aidl::android::media::audio::common::AudioFormatType;
++using aidl::android::media::audio::common::PcmType;
+ using android::base::GetBoolProperty;
+ 
+ namespace aidl::android::hardware::audio::core {
+ 
++// The built-in DMIC has no codec gain. Speech peaks far below full scale,
++// so a recording is inaudible until playback is at maximum. 16x is +24 dB.
++void amplifyPcm16(void* buffer, size_t samples) {
++    auto* pcm = static_cast<int16_t*>(buffer);
++    for (size_t i = 0; i < samples; ++i) {
++        const int32_t scaled = static_cast<int32_t>(pcm[i]) * 16;
++        pcm[i] = static_cast<int16_t>(std::clamp(scaled, int32_t{-32768}, int32_t{32767}));
++    }
++}
++
+ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
+     : StreamAlsa(context, metadata, 3 /*readWriteRetries*/),
+       mIsAsynchronous(!!getContext().getAsyncCallback()),
+@@ -102,7 +116,14 @@
+     // For input streams, StreamAlsa::transfer() directly calls blocking proxy_read_with_retries()
+     // which is already hardware-clocked by ALSA DMA, so do not skip transfers or sleep again.
+     if (mIsInput) {
+-        return StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs);
++        const ::android::status_t status =
++                StreamAlsa::transfer(buffer, frameCount, actualFrameCount, latencyMs);
++        const auto format = getContext().getFormat();
++        if (status == ::android::OK && actualFrameCount != nullptr && *actualFrameCount > 0 &&
++            format.type == AudioFormatType::PCM && format.pcm == PcmType::INT_16_BIT) {
++            amplifyPcm16(buffer, *actualFrameCount * (mFrameSizeBytes / sizeof(int16_t)));
++        }
++        return status;
+     }
+     if (!mSkipNextTransfer) {
+         RETURN_STATUS_IF_ERROR(

@@ -12,6 +12,15 @@
 | 6 | 已修复，2026-10-23 实机验证 | 开机没有 LineageOS 标志，先黑屏无背光，再黑屏有背光 |
 | 7 | 已修复，2026-10-23 实机验证 | 720p 竖屏（720×1280）硬解画面全是横线和竖线 |
 | 8 | 已修复，2026-10-23 实机验证 | SELinux 停在 permissive |
+| 9 | 已修复，2026-10-23 实机验证 | 媒体、铃声和系统提示音没有声音 |
+| 10 | 已修复，2026-10-23 实机验证 | 相机打不开，或打开后没有画面 |
+| 11 | 已修复，2026-10-23 实机验证 | 蓝牙耳机连不上，鼠标可以 |
+| 12 | 已修复，2026-10-23 实机验证 | 3.5 mm 耳机孔能检测到设备，没有声音 |
+| 13 | 已修复，2026-10-23 实机验证 | 蓝牙耳机不播放触摸音 |
+| 14 | 已修复，2026-10-23 实机验证 | 取景器大约 20 fps，帧间隔不稳 |
+| 15 | 已修复，2026-10-23 实机验证 | 录音和录像的基准音量极低 |
+| 16 | 已修复，2026-10-23 实机验证 | 开机后第一张照片左半边是洋红色 |
+| 17 | 已修复，2026-10-23 实机验证 | DP 音频要等大约 1 秒，短音频出不来，播放中会断 |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -131,4 +140,94 @@
 - **第五次实机（2026-10-23，super `2417ddb26cecebbf30e22d39bb8b1337df4c68e68e8fe8e3fc0806c41026bf1a`）**：进到桌面。设置里 SELinux 显示正在运行，`getenforce` 是 Enforcing。内核分区仍是 `e8a1fff77bc9a1a2e2f373acbd8a5253ccc700a02d8d16752013dc3e85d00014`，命令行 `loglevel=7`。
 - **这次启动里不该进发布包的调试**：`gru-keep` 在看门狗移交并执行 `/init.android` 之后仍留着一个 `SCHED_FIFO` 进程（pid 1069），每 200 ms 读 `/dev/kmsg`，并以 `O_SYNC` 写 `/bootlog/gru-phase3.log`。`init.svc.gru_logcat` 是空的，这条服务没跑起来，但 `init.gru.rc` 里还定义着，会把 logcat 镜像到 `/data/gru-logcat.txt` 和 `/dev/kmsg`。
 - **打包前从源码拿掉的**：`gru-keep` 只在执行 Android init 之前把当时的 kmsg 写进 bootlog，然后卸掉 bootlog、关掉日志、执行 `/init.android`，不再留常驻进程。`gru_logcat` 服务和 `gru-logcat.sh` 不再装进镜像。FIT 命令行改成 `loglevel=4`，界面起来之后仍把控制台降到 `3 4 1 3`。`printk.devkmsg=on` 留着，避免扩容脚本写 kmsg 被限速。`debug.renderengine.backend=skiaglthreaded`、`debug.hwui.renderer=skiagl`、`debug.stagefright.c2-poolmask=0x70000`、无线 adb（`ro.adb.secure=0`，端口 5555）和桌面模式那条属性都是功能设置，继续留着。
-- **清理后的镜像（还没刷）**：super 仍是 `1,262,428,564` 字节，SHA-256 `437a56cda05720f693c446e9fdbba350cad76b7b598a80881ace4e95e7a80b91`。`vmlinuz.kpart` `13,746,176` 字节，SHA-256 `6583c6480079801f6b9edd27830d95251dae40c1b9820185ba54b47504f94a5d`，命令行是 `loglevel=4` 和 `androidboot.selinux=enforcing`。`prebuilt/gru-keep` 这次用 ramdisk 的 bionic 静态链接并去掉了调试符号，还没在实机上跑过。只刷 super 的话，卡上的旧 FIT 仍会留下常驻日志进程和 `loglevel=7`。回退仍是 permissive FIT `920f638358c36c85800bd48f4b9ae12bc528af8242d096557c3f03a65cd6e5ae` 配 super `7250c915af383b7c4c230fe9f74255a7bf40349bcf2bcc7a6d70a57596ade8d7`。只换回旧 super、留下 enforcing 的 FIT，还会停在同一处。
+- **清理后的镜像**：super 仍是 `1,262,428,564` 字节，SHA-256 `437a56cda05720f693c446e9fdbba350cad76b7b598a80881ace4e95e7a80b91`。`vmlinuz.kpart` `13,746,176` 字节，SHA-256 `6583c6480079801f6b9edd27830d95251dae40c1b9820185ba54b47504f94a5d`，命令行是 `loglevel=4` 和 `androidboot.selinux=enforcing`。`prebuilt/gru-keep` 这次用 ramdisk 的 bionic 静态链接并去掉了调试符号。只刷 super 的话，卡上的旧 FIT 仍会留下常驻日志进程和 `loglevel=7`。回退仍是 permissive FIT `920f638358c36c85800bd48f4b9ae12bc528af8242d096557c3f03a65cd6e5ae` 配 super `7250c915af383b7c4c230fe9f74255a7bf40349bcf2bcc7a6d70a57596ade8d7`。只换回旧 super、留下 enforcing 的 FIT，还会停在同一处。
+- **实机（2026-10-23，上面这份 super 和内核都刷过）**：进到桌面，设置里 SELinux 是正在运行。内核分区停在 `6583c6480079801f6b9edd27830d95251dae40c1b9820185ba54b47504f94a5d`，第 9 节往后没有再换。enforcing 跑起来之后暴露的声音、相机、蓝牙和耳机问题从第 9 节记起。
+
+## 9. 媒体、铃声和系统提示音没有声音
+
+- **现象**：enforcing 进到桌面之后，应用里的媒体还能出声之前，先是大部分声音都没有，只剩触摸音。媒体修好之后，铃声和系统提示音仍然没有。触摸音中间又断过一次。USB 音频和当时的 DP 音频不受影响。
+- **原因**：libcutils 的 memfd 出生时类型是 `tmpfs`，改标签之前就要读写。MLS 还要求写文件时两端级别相同，或者目标是 `mlstrustedobject`。铃声走 mediaserver 的 NuPlayer，系统提示音和触摸音走 system_server 里的 vorbis 解码，SoundPool 把应用建出来的 memfd 交给 audioserver。这几条 fd 在 binder 里翻译失败，AudioTrack 建不出来。
+- **修复**（`device/google/gru/sepolicy/vendor/memfd.te`、`audioserver.te`）：
+  1. `mediaserver` 可以读写 `audioserver_tmpfs`。`mediaserver_tmpfs` 标成 `mlstrustedobject`，解码器和应用都能映射。
+  2. `mediaswcodec` 建出来的队列单独标成 `mediaswcodec_tmpfs`，同样是 `mlstrustedobject`。system_server 和 mediaserver 都能读。
+  3. audioserver 可以读写 `appdomain_tmpfs`，SoundPool 的堆才过得去。
+- **实机（2026-10-23）**：媒体、铃声、系统提示音和本机触摸音都恢复。中间那张只修好媒体的 super 是 `87d98871` 这一代；相机和触摸音一起确认是在 `a4479be6` 上。
+
+## 10. 相机打不开，或打开后没有画面
+
+- **现象**：先是相机应用直接闪退。接着能打开，前后摄都报「设置相机会话时出错，此应用将尝试恢复」，没有预览。
+- **原因**：`hal_camera_default` 读传感器 uevent 时节点仍是 `sysfs`，provider 匹配不到相机。请求队列是 memfd，`has_memfd_support()` 因为写测试文件被拒绝而缓存成不支持，会话报无效队列。预览缓冲要经 gralloc mapper 导入，缺 allocator 客户端和 composer 的 fence 时，第一次请求就以 `gralloc-mapper is missing` 退出，provider 循环重启。应用拿回的结果队列是 `s0`，带 MLS category 的应用写不进去。`vendor.minigbm.device` 指到 `/dev/dri/card0`，相机和 cameraserver 读不到这个属性时 mapper 打不开卡。
+- **修复**（`sepolicy/vendor/hal_camera_default.te`）：允许读 `sysfs_v4l` 和尚未单独标注的 `sysfs:file`；`hal_camera_default_tmpfs` 交给 cameraserver；`cameraserver_tmpfs` 标成 `mlstrustedobject` 并允许 appdomain 映射；`hal_client_domain(..., hal_graphics_allocator)`；允许使用 composer 的 fd；`hal_camera_default` 和 `cameraserver` 可以读 `vendor_minigbm_prop`。
+- **留下不放行的**：`hal_camera_default` 读 `default_prop`。`ro.camera.req.fmq.size` 和 `ro.camera.res.fmq.size` 没有设置，读失败后会话用默认的 1 MB 队列，不改变出图。放行等于让 vendor HAL 读所有未标注的系统属性。
+- **实机（2026-10-23，super `a4479be6`）**：前后摄预览和拍照都恢复。这次启动（2026-10-23 22:28，super `41a1317bb1de6444c4a859ad8df414551117ba108fcb32e8fbccf2f6f71d9d8b`）打开相机时仍是每次两下 `default_prop` 读取，没有 gralloc、FMQ 或 `cameraserver_tmpfs` 的新拒绝。
+
+## 11. 蓝牙耳机连不上，鼠标可以
+
+- **现象**：耳机配对后连不上。同一台机器上的蓝牙鼠标可以连，指针正常。
+- **原因**：A2DP `StartSession` 要映射一块仍是 `tmpfs` 的 FMQ。binder 回复被丢掉，bluetooth 进程中止，耳机停在连接过程里。HID 鼠标不打开这条队列。
+- **修复**：`allow bluetooth tmpfs:file { getattr ioctl read write map }`，写在 `memfd.te`。
+- **没有放行的**：内核线程 `krfcommd` 的 `net_bind_service`。这条是 `kernel` 对 `capability` 的绑定，放行等于允许内核绑定所有 1024 以下的端口。A2DP 和鼠标在拒绝仍然存在时已经能用。
+- **实机（2026-10-23）**：耳机可以连接，媒体、提示音和铃声都从耳机出来。本次启动（22:28）仍有 1 次 `krfcommd` 的 `net_bind_service`，`permissive=0`。
+
+## 12. 3.5 mm 耳机孔能检测到设备，没有声音
+
+- **现象**：插入后系统能看到耳机，内置扬声器和耳机孔都没有声音。拔掉之后扬声器也不回来。内置麦克风、USB 音频、当时的 DP 音频是好的。
+- **原因**：DA7219 上电后 `MIXOUT_*_SELECT` 是 0，DAC 到不了混音器，DAC 和耳机静音位也是关的。策略把耳机报给 HAL 之后，只翻转了 `Headphones Switch` / `Speakers Switch`，通路本身仍是静音。拔出时设备列表变空，回调又把扬声器开关清掉，所以内外一起没声。
+- **修复**（`patches/hardware_interfaces_audio_analog_jack_mixer.patch`，`GruAnalogMixer.h`）：耳机插入时把 `Out DACL Mux` / `Out DACR Mux` 设到 DAIL/DAIR，打开混音器滤波、`Playback Digital Switch`、`Headphone Switch`，`Headphone Volume` 设为 57。拔出时只恢复扬声器开关，空的设备列表不再改混音器。输入侧把两路 `Out DAI Mux` 保持在 ADC，并切换 `Headset Mic Switch` / `Int Mic Switch`，避免 DA7219 在 I2S 输入线上灌 0。
+- **实机（2026-10-23，super `b727a7223fac789c1f8458222f7aba2e40df755ac689c1315d5ccd5708519fd5`）**：插入后耳机孔有声音，拔出后内置扬声器回来。
+
+## 13. 蓝牙耳机不播放触摸音
+
+- **现象**：耳机上的媒体、系统提示音和铃声都正常，触摸音没有。本机扬声器的触摸音是好的。`sound_effects_enabled=1`。
+- **原因**：触摸音是 `USAGE_ASSISTANCE_SONIFICATION`，进 `AUDIO_STREAM_SYSTEM`，再别名到铃声流。A2DP 和有线耳机都是 `DEVICE_CATEGORY_HEADSET`。库存的 SYSTEM 耳机曲线最高只有 −18 dB，音效本身再衰减 6 dB，落到大约 −30 dB。同一条输出上的通知已经用另一条曲线，所以听得见。这不是 SELinux。
+- **修复**：`device/google/gru/etc/audio_policy_volumes.xml` 里，`AUDIO_STREAM_SYSTEM` 的 `DEVICE_CATEGORY_HEADSET` 改成引用 `DEFAULT_DEVICE_CATEGORY_HEADSET_VOLUME_CURVE`（1/−49.5 dB，33/−33.5，66/−17，100/0）。扬声器和 `EXT_MEDIA` 的 SYSTEM 曲线不动。绝对音量打开时，这条曲线的上限是 0 dB，安静的耳机上系统音会被抬到和媒体一起衰减。
+- **实机（2026-10-23，super `677704c021abb7e526365cbd4142d746895ea41ddb4578debc7a3c768c3ad1d3`）**：蓝牙耳机上的触摸音恢复。
+
+## 14. 取景器大约 20 fps，帧间隔不稳
+
+- **现象**：SELinux 改成 enforcing 之后，取景器帧率不稳，看起来也拖慢了录像。
+- **原因**：不是策略。后摄取景时请求间隔中位数 51 ms（大约 20 fps），和自动曝光把快门停在 50.8 ms 重合。应用请求的是一个区间，例如 20–30 fps，室内就停在下限。`kMaxShutterSpeed` 是 60 ms。同一次开机的相机拒绝只有 `default_prop` 读取，不改变帧间隔。请求线程上每帧还在打两条不支持控件的警告（`FaceDetectMode`、`Mode3A`），偶发把间隔拉到 80 ms。
+- **修复**（`patches/external_libcamera_stable_preview_fps.patch`，`camera_device.cpp` 的 `processControls`）：请求上限不低于 24 fps 且下限更低时，把下限锁到上限。取景和录像因此停在应用要的上限，通常是 30 fps。固定的低帧率静帧请求不动。暗处快门不再拉到 50 ms，画面会更噪。那两条警告改成只记一次。
+- **实机（2026-10-23，super `677704c021abb7e526365cbd4142d746895ea41ddb4578debc7a3c768c3ad1d3`）**：取景器帧率恢复稳定。
+
+## 15. 录音和录像的基准音量极低
+
+- **现象**：一直如此，和 enforcing 无关。必须凑近麦克风，回放时把音量开到最大才听得见。
+- **原因**：内置数字麦克风没有硬件增益。主 HAL 只找名为 `Capture Volume` 的整数控件，这块声卡没有，`setMicGain` 返回不支持。DA7219 上的模拟增益是耳机麦，不是这颗 DMIC。
+- **修复**（`patches/hardware_interfaces_audio_builtin_mic_gain.patch`）：主输入读到的 16 位 PCM 乘 16（+24 dB），饱和到满幅。USB 音频不走这条路径。没有再抬 DA7219 的模拟增益，免得耳机麦被加两次。
+- **实机（2026-10-23，super `677704c021abb7e526365cbd4142d746895ea41ddb4578debc7a3c768c3ad1d3`）**：录音音量上来了。
+
+## 16. 开机后第一张照片左半边是洋红色
+
+- **现象**：每次开机后的第一张照片，左半边所有东西都偏洋红色，右半边正常。后面的照片正常。取景器本身是好的。
+- **现场（修之前，2026-10-23 21:56，super `677704c021abb7e526365cbd4142d746895ea41ddb4578debc7a3c768c3ad1d3`）**：第一张 `2026-10-23-21-56-42-975.jpg` 是 2560×1920，EXIF 方向 6，显示成 1920×2560。左半边绿色通道被压到大约 15，红和蓝仍是画面本身的亮度，所以看起来是品红，物体轮廓还在。分界在显示宽度大约 1024 处，是一条直线。三秒后的第二张左右绿色都正常。
+- **原因**：ISP 色彩增益的复位值把绿色增益留在 0。通路刚启动时，已经在扫描的那一半帧来不及跟上新增益。传感器是横的，方向 6 把这一半转到竖屏照片的左边。预览走另一条通路，启动后的帧已经正常，所以只有第一张静帧中招。
+- **修复**（`patches/external_libcamera_drop_isp_warmup_frames.patch`，`rkisp1.cpp`）：每条通路在 `start` 之后丢掉最先出队的两帧，请求改由后面的完整帧完成。
+- **实机（2026-10-23 22:29，super `41a1317bb1de6444c4a859ad8df414551117ba108fcb32e8fbccf2f6f71d9d8b`）**：开机后第一张 `2026-10-23-22-29-42-689.jpg` 和六秒后的第二张，按列算的品红指数整幅都在 −8 到 +3，没有左半边的台阶。
+
+## 17. DP 音频要等大约 1 秒，短音频出不来
+
+- **现象**：USB-C 接显示器之后，短提示音来不及出声，长音频大约晚 1 秒，播放中间还会断。有线连接不该是这个速度。画面和路由本身是通的，第 4 节已经把声音送到了 DP。
+- **现场（修之前，2026-10-23 22:03，super `677704c021abb7e526365cbd4142d746895ea41ddb4578debc7a3c768c3ad1d3`）**：主输出切到 `connection: hdmi` 后打开 `pcmC0D3`。一段 7.5 秒的音频按 48 kHz 实时写完，暂停后 1 毫秒内 `teardownIo` 关掉 PCM。下一段声音再次 `proxy_open`。关掉会走到 `cdn_dp_audio_stop`，SPDIF 时钟和打包器被复位，显示器要重新锁定。短于这个锁定时间的声音在出声前就被拆掉。
+- **修复**（`patches/hardware_interfaces_audio_hdmi_keepalive.patch`）：当前设备是 HDMI（`ro.vendor.audio.hdmi.alsa_device`，默认 3）时，standby 不关 PCM，改由线程写静音，日志是 `standby: holding PCM open`。下一次 `start` 发现设备还开着，直接接着写。切回扬声器或关机时才真正 `teardownIo`。线刚插上的第一声仍要等显示器锁定一次。
+- **实机（2026-10-23 22:33，super `41a1317bb1de6444c4a859ad8df414551117ba108fcb32e8fbccf2f6f71d9d8b`）**：HDMI 上一段音频从帧 3510272 写到 3657728，差 147456 帧，按 48 kHz 是 3.07 秒，墙上时间 3.12 秒。暂停后打了 `holding PCM open`，没有关掉 `pcmC0D3`。大约 250 ms 后线拔掉，下一次 `start` 才 `teardownIo` 并打开 `pcmC0D0`。听感上 DP 音频连贯，中间不再断开。
+
+## 一并放行、这次启动已经不再出现的拒绝
+
+这些不对应上面某一条用户能听到或看到的故障，是 enforcing 之后的启动日志里多出来的，放行不扩大到读系统属性或绑定特权端口。
+
+- `system_suspend` 和 `system_server` 读尚未单独标注的 `sysfs:file`。`/sys/class/wakeup` 指到的计数器仍是 `sysfs`，平台那条 `sysfs_wakeup` 盖不住。写 `sysfs` 仍然禁止。`system_server` 的例外加在 `patches/system_sepolicy_sysfs_read_suspend_input.patch`，和 surfaceflinger 那条放在同一条 neverallow 里。
+- `init` 对 `debugfs_bootreceiver_tracing:dir` 的 `{ write add_name }`。这个内核上 `error_report_end` 是目录，创建 `enable` 要 `add_name`，只给 `write` 不够。
+- `appdomain` 读 `proc_max_map_count`。运行时用这个全局整数估计堆能映射多少，不是凭据。
+- `vendor_init` 写自己的 `key`，`kernel` 可以 `search` 这把 key。`kernel` 对 `device:dir` 增加 `rmdir`，devtmpfs 收掉节点时要用。`vendor_init` 设置 `sys.use_memfd` 和 `sys.brightness.disable_gamma_conversion` 仍然不放行，这两项已经在 product 属性里。`vendor_init` 读 `init.svc.usbd` 也不放行；`stop usbd` 挪到了 `system_ext` 的 `init.gru.usbd.rc`。
+
+## 这次启动仍会拒绝、继续留着的两条
+
+2026-10-23 22:28 开机，`getenforce` 是 Enforcing，镜像是下面这份。整段 logcat 里的 `type=1400` 只有：
+
+- 8 次 `hal_camera_default` 读 `default_prop`（22:29:35、22:29:39、22:30:02、22:30:04，每次打开相机两下）。见第 10 节。
+- 1 次 `krfcommd` 的 `net_bind_service`。见第 11 节。
+
+没有再出现 init 的 `add_name`、相机的 gralloc 或 FMQ、mediaserver 的 tmpfs、bluetooth 的 tmpfs。
+
+- **镜像**：`/run/media/alpha/YMTC/lineage-23.2/out/target/product/gru/super.img`，`1,262,432,660` 字节，SHA-256 `41a1317bb1de6444c4a859ad8df414551117ba108fcb32e8fbccf2f6f71d9d8b`。第 9 节到第 17 节都在这份里。内核分区仍是 `6583c6480079801f6b9edd27830d95251dae40c1b9820185ba54b47504f94a5d`。

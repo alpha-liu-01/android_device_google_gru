@@ -75,10 +75,12 @@
         <item>7</item>
     </integer-array>
 
-    <!-- Desktop mode is supported on the current device and developer option -->
+    <!-- Desktop mode stays available for an external DP display. The internal
+         panel must not host desks: persisted empty desks come back as recents
+         cards on every boot. -->
     <bool name="config_isDesktopModeSupported">true</bool>
     <bool name="config_isDesktopModeDevOptionSupported">true</bool>
-    <bool name="config_canInternalDisplayHostDesktops">true</bool>
+    <bool name="config_canInternalDisplayHostDesktops">false</bool>
 
     <!--
         The DSI mode is 60.01552 Hz. SurfaceFlinger treats a frame rate as

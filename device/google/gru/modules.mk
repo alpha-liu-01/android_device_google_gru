@@ -89,5 +89,6 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/prebuilt/6.6.34-phase2/phy-rockchip-inno-dsidphy.ko:$(TARGET_COPY_OUT_RAMDISK)/lib/modules/6.6.34-phase2/phy-rockchip-inno-dsidphy.ko \
     $(LOCAL_PATH)/prebuilt/6.6.34-phase2/loop.ko:$(TARGET_COPY_OUT_RAMDISK)/lib/modules/6.6.34-phase2/loop.ko \
     $(LOCAL_PATH)/prebuilt/6.6.34-phase2/xfrm_user.ko:$(TARGET_COPY_OUT_RAMDISK)/lib/modules/6.6.34-phase2/xfrm_user.ko \
+    $(LOCAL_PATH)/prebuilt/6.6.34-phase2/uinput.ko:$(TARGET_COPY_OUT_RAMDISK)/lib/modules/6.6.34-phase2/uinput.ko \
     $(LOCAL_PATH)/prebuilt/6.6.34-phase2/modules.dep:$(TARGET_COPY_OUT_RAMDISK)/lib/modules/6.6.34-phase2/modules.dep \
     $(LOCAL_PATH)/prebuilt/6.6.34-phase2/modules.load:$(TARGET_COPY_OUT_RAMDISK)/lib/modules/6.6.34-phase2/modules.load

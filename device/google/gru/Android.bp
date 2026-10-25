@@ -10,3 +10,12 @@
 
 soong_namespace {
 }
+
+android_app_import {
+    name: "StylusCtrl",
+    apk: "prebuilt/StylusCtrl.apk",
+    preprocessed: true,
+    dex_preopt: {
+        enabled: false,
+    },
+}

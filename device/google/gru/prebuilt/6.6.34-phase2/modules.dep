@@ -87,3 +87,4 @@ sbs-battery.ko:
 phy-rockchip-inno-dsidphy.ko:
 loop.ko:
 xfrm_user.ko:
+uinput.ko:

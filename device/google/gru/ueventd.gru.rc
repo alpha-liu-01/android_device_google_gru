@@ -1,6 +1,10 @@
 # Bluetooth rfkill & uhid
 /dev/rfkill                                                                 0660   bluetooth  bluetooth
 /dev/uhid                                                                   0660   uhid       uhid
+/dev/uinput                                                                 0660   uhid       uhid
+# stylusctld opens these read-only for the external pen's second button.
+# Owner stays system. Group input is the group on the stylusctrl service.
+/dev/hidraw*                                                                0660   system     input
 
 # DMA-BUF CMA heap
 /dev/dma_heap/reserved                                                      0444   system     system

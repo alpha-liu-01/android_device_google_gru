@@ -1,0 +1,78 @@
+diff --git a/private/stylusctrl.te b/private/stylusctrl.te
+new file mode 100644
+--- /dev/null
++++ b/private/stylusctrl.te
+@@ -0,0 +1,25 @@
++# Builtin pen. The settings app writes config.json in its own files dir.
++# This domain reads that file, grabs the i2c-hid pen, and creates the
++# replacement device on /dev/uinput.
++type stylusctrl, domain, coredomain;
++type stylusctrl_exec, system_file_type, exec_type, file_type;
++
++init_daemon_domain(stylusctrl)
++
++allow stylusctrl input_device:dir r_dir_perms;
++allow stylusctrl input_device:chr_file rw_file_perms;
++allow stylusctrl uhid_device:chr_file rw_file_perms;
++
++# /sys/class/input/eventN is a symlink into a device directory that stays
++# type sysfs. coredomain.te exempts the read. Write stays forbidden.
++allow stylusctrl sysfs:dir r_dir_perms;
++allow stylusctrl sysfs:file r_file_perms;
++allow stylusctrl sysfs:lnk_file r_file_perms;
++
++allow stylusctrl system_data_file:dir search;
++allow stylusctrl system_data_file:lnk_file read;
++allow stylusctrl app_data_file:dir { search getattr };
++allow stylusctrl app_data_file:file { getattr open read };
++
++# The init service uses stdio_to_kmsg.
++allow stylusctrl kmsg_debug_device:chr_file w_file_perms;
+diff --git a/private/coredomain.te b/private/coredomain.te
+--- a/private/coredomain.te
++++ b/private/coredomain.te
+@@ -156,6 +156,8 @@ full_treble_only(`
+   # is a symlink into device directories that stay type sysfs.
+   # system_server InputReader reads the input device name and keyboard
+   # country the same way. Write stays forbidden.
++  # stylusctrl reads /sys/class/input to identify the builtin pen.
++  # Those inodes stay type sysfs. Write stays forbidden.
+   neverallow {
+     coredomain
+     -apexd
+@@ -172,6 +174,7 @@ full_treble_only(`
+     -surfaceflinger
+     -system_suspend
+     -system_server
++    -stylusctrl
+     is_flag_enabled(RELEASE_AVF_ENABLE_DEVICE_ASSIGNMENT, `-vfio_handler')
+     -vold
+   } sysfs:file { open read ioctl lock watch watch_mount watch_sb watch_with_perm watch_reads };
+diff --git a/private/domain.te b/private/domain.te
+--- a/private/domain.te
++++ b/private/domain.te
+@@ -1752,6 +1752,7 @@ neverallow {
+   -rs # spawned by appdomain, so carryover the exception above
+   -runas
+   -system_server
++  -stylusctrl
+   -zygote
+ } {
+   privapp_data_file
+@@ -1818,6 +1819,7 @@ neverallow {
+   -artd # compile secondary dex files
+   -installd
+   -rs # spawned by appdomain, so carryover the exception above
++  -stylusctrl
+ } {
+   privapp_data_file
+   app_data_file
+diff --git a/private/file_contexts b/private/file_contexts
+--- a/private/file_contexts
++++ b/private/file_contexts
+@@ -970,3 +970,5 @@
+ #############################
+ # For overlays
+ /second_stage_resources/overlay_remounter u:object_r:overlay_remounter_exec:s0
++
++/system/bin/stylusctld    u:object_r:stylusctrl_exec:s0

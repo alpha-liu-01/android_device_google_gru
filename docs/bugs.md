@@ -21,7 +21,7 @@
 | 15 | 已修复，2026-10-23 实机验证 | 录音和录像的基准音量极低 |
 | 16 | 已修复，2026-10-23 实机验证 | 开机后第一张照片左半边是洋红色 |
 | 17 | 已修复，2026-10-23 实机验证 | DP 音频要等大约 1 秒，短音频出不来，播放中会断 |
-| 18 | 已改 overlay，刷入新 super 后生效 | 每次开机最近任务里有两个「桌面设备」 |
+| 18 | 已打包，尚未刷卡验证 | 每次开机最近任务里有两个「桌面设备」 |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -222,7 +222,8 @@
   - `21:01:03` 点其中一张会把桌面 6 和 `DesktopWallpaperActivity` 带到前台，大约 5 秒后回到原来的界面。
   - `21:01:13` 两张都被划掉，原因是 `RECENTS_DISMISS`。划掉最后一张时日志是 `updatePersistentRepository: no desks found for displayId=0, skipping`。磁盘上的旧记录没有清掉，所以下次开机又恢复成同样的两张。锁屏不重读这份记录。
 - **原因**：`config_canInternalDisplayHostDesktops` 被设成 `true`，内置屏也被当成可以承载桌面。扩展桌面开着时，系统把内置屏上的桌面写进持久化记录，开机再恢复。外接屏的扩展桌面走 `override_desktop_experience_features`、projected desktop 和 display content mode，不靠这一项。
-- **修复**：`device/google/gru/overlay/frameworks/base/core/res/res/values/config.xml` 里 `config_canInternalDisplayHostDesktops` 改为 `false`。`config_isDesktopModeSupported` 和 `config_isDesktopModeDevOptionSupported` 仍是 `true`。开机恢复时，指向内置屏的桌面会被跳过。外接屏扩展桌面保留。这次改动要等新的 super 刷入才生效；在那之前，下一次重启仍会再出现这两张。
+- **修复**：`device/google/gru/overlay/frameworks/base/core/res/res/values/config.xml` 里 `config_canInternalDisplayHostDesktops` 改为 `false`。`config_isDesktopModeSupported` 和 `config_isDesktopModeDevOptionSupported` 仍是 `true`。开机恢复时，指向内置屏的桌面会被跳过。外接屏扩展桌面保留。
+- **镜像（尚未刷卡）**：`super.img` `1,267,397,012` 字节，SHA-256 `861c44bed97e3e142b9273bfc28f26705a6b7d4e6d5d50b1c8c9e746275df5f8`。打进 overlay 的 `config_canInternalDisplayHostDesktops` 是 `false`。刷机包 `lineage-23.2-gru-20261024.zip`，`1,043,208,182` 字节，SHA-256 `caa2d3151ec0f0d8b17fc4b8a02cefc61a7243114aa023fe7c61d4340643ff34`。里面的内核分区是 `fb3e10f5bc75c3ecfd66627c2134dd722b86ef244226103447f1dae91a6d0c4f`（`13,770,752` 字节），命令行仍是 `loglevel=4` 和 `androidboot.selinux=enforcing`。卡上现在的内核还是 `6583c648`；只刷 super 不会换内核。在这份 super 刷入之前，下一次重启仍会再出现这两张。
 
 ## 一并放行、这次启动已经不再出现的拒绝
 

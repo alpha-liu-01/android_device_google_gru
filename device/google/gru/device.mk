@@ -152,7 +152,6 @@ PRODUCT_COPY_FILES += \
     frameworks/av/services/audiopolicy/config/usb_audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/usb_audio_policy_configuration.xml \
     $(LOCAL_PATH)/etc/sensors/hals.conf:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/hals.conf \
     $(LOCAL_PATH)/etc/sensors/sensor_hal_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/sensors/sensor_hal_configuration.xml \
-    $(LOCAL_PATH)/etc/display_settings.xml:$(TARGET_COPY_OUT_VENDOR)/etc/display_settings.xml \
     $(LOCAL_PATH)/etc/camera/camera_hal.yaml:$(TARGET_COPY_OUT_VENDOR)/etc/camera/libcamera/camera_hal.yaml \
     $(LOCAL_PATH)/etc/camera/camera_hal.yaml:$(TARGET_COPY_OUT_VENDOR)/etc/libcamera/camera_hal.yaml \
     $(LOCAL_PATH)/idc/Elan_Touchscreen.idc:$(TARGET_COPY_OUT_VENDOR)/usr/idc/Elan_Touchscreen.idc \

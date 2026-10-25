@@ -1,0 +1,11 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<!--
+    The panel is sw945dp. Android 16 treats sw>=600dp as a large screen and
+    ignores fixed orientation requests, so a fullscreen video stays in the
+    current rotation until the device itself is turned. Honor the request on
+    the built-in display. Auto-rotate is unchanged.
+-->
+<display-settings>
+    <config identifier="0" />
+    <display name="local:0" ignoreOrientationRequest="false" />
+</display-settings>

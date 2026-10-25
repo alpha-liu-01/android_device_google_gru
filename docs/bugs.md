@@ -21,6 +21,7 @@
 | 15 | 已修复，2026-10-23 实机验证 | 录音和录像的基准音量极低 |
 | 16 | 已修复，2026-10-23 实机验证 | 开机后第一张照片左半边是洋红色 |
 | 17 | 已修复，2026-10-23 实机验证 | DP 音频要等大约 1 秒，短音频出不来，播放中会断 |
+| 18 | 已改 overlay，刷入新 super 后生效 | 每次开机最近任务里有两个「桌面设备」 |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -211,6 +212,17 @@
 - **现场（修之前，2026-10-23 22:03，super `677704c021abb7e526365cbd4142d746895ea41ddb4578debc7a3c768c3ad1d3`）**：主输出切到 `connection: hdmi` 后打开 `pcmC0D3`。一段 7.5 秒的音频按 48 kHz 实时写完，暂停后 1 毫秒内 `teardownIo` 关掉 PCM。下一段声音再次 `proxy_open`。关掉会走到 `cdn_dp_audio_stop`，SPDIF 时钟和打包器被复位，显示器要重新锁定。短于这个锁定时间的声音在出声前就被拆掉。
 - **修复**（`patches/hardware_interfaces_audio_hdmi_keepalive.patch`）：当前设备是 HDMI（`ro.vendor.audio.hdmi.alsa_device`，默认 3）时，standby 不关 PCM，改由线程写静音，日志是 `standby: holding PCM open`。下一次 `start` 发现设备还开着，直接接着写。切回扬声器或关机时才真正 `teardownIo`。线刚插上的第一声仍要等显示器锁定一次。
 - **实机（2026-10-23 22:33，super `41a1317bb1de6444c4a859ad8df414551117ba108fcb32e8fbccf2f6f71d9d8b`）**：HDMI 上一段音频从帧 3510272 写到 3657728，差 147456 帧，按 48 kHz 是 3.07 秒，墙上时间 3.12 秒。暂停后打了 `holding PCM open`，没有关掉 `pcmC0D3`。大约 250 ms 后线拔掉，下一次 `start` 才 `teardownIo` 并打开 `pcmC0D0`。听感上 DP 音频连贯，中间不再断开。
+
+## 18. 每次开机最近任务里有两个「桌面设备」
+
+- **现象**：每次开机，最近任务里都有两张名为「桌面设备」的卡片。点进去画面几乎不动。划掉之后，锁屏再亮屏不会再出现；下次开机又有。
+- **现场（2026-10-24 20:59–21:01，`10.0.0.108:5555`，当时只连着内置屏 `local:0`）**：
+  - `20:59:32` `DesktopRepositoryInitializerImpl` 打出 `will restore desks=[6, 8]`，两张都恢复到 `displayId=0`。桌面 6 里是任务 21，范围 `Rect(381, 275 - 1855, 1379)`。桌面 8 里是任务 35，范围 `Rect(0, 0 - 0, 0)`。
+  - 最近任务标题用的是 Launcher3 的 `recent_task_desktop`。英文是 Desktop，简体中文译成「桌面设备」。
+  - `21:01:03` 点其中一张会把桌面 6 和 `DesktopWallpaperActivity` 带到前台，大约 5 秒后回到原来的界面。
+  - `21:01:13` 两张都被划掉，原因是 `RECENTS_DISMISS`。划掉最后一张时日志是 `updatePersistentRepository: no desks found for displayId=0, skipping`。磁盘上的旧记录没有清掉，所以下次开机又恢复成同样的两张。锁屏不重读这份记录。
+- **原因**：`config_canInternalDisplayHostDesktops` 被设成 `true`，内置屏也被当成可以承载桌面。扩展桌面开着时，系统把内置屏上的桌面写进持久化记录，开机再恢复。外接屏的扩展桌面走 `override_desktop_experience_features`、projected desktop 和 display content mode，不靠这一项。
+- **修复**：`device/google/gru/overlay/frameworks/base/core/res/res/values/config.xml` 里 `config_canInternalDisplayHostDesktops` 改为 `false`。`config_isDesktopModeSupported` 和 `config_isDesktopModeDevOptionSupported` 仍是 `true`。开机恢复时，指向内置屏的桌面会被跳过。外接屏扩展桌面保留。这次改动要等新的 super 刷入才生效；在那之前，下一次重启仍会再出现这两张。
 
 ## 一并放行、这次启动已经不再出现的拒绝
 

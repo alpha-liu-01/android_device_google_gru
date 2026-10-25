@@ -1,0 +1,35 @@
+diff --git a/private/stylusctrl.te b/private/stylusctrl.te
+--- a/private/stylusctrl.te
++++ b/private/stylusctrl.te
+@@ -2,6 +2,12 @@
+ # This domain reads that file, grabs the i2c-hid pen, and creates the
+ # replacement device on /dev/uinput.
+ type stylusctrl, domain, coredomain;
++# /data/user/0 is system_data_file at s0:c512,c768. An s0 domain does not
++# dominate that level, so directory search fails without this attribute.
++typeattribute stylusctrl mlstrustedsubject;
++
++dontaudit stylusctrl adb_data_file:dir search;
++dontaudit stylusctrl shell_data_file:dir search;
+ type stylusctrl_exec, system_file_type, exec_type, file_type;
+ 
+ init_daemon_domain(stylusctrl)
+diff --git a/private/mlstrustedsubject.te b/private/mlstrustedsubject.te
+--- a/private/mlstrustedsubject.te
++++ b/private/mlstrustedsubject.te
+@@ -8,6 +8,7 @@ neverallow {
+   mlstrustedsubject
+   -artd # compile secondary dex files
+   -installd
++  -stylusctrl
+   -mediaprovider_app
+ } {
+   app_data_file
+@@ -41,6 +42,7 @@ neverallow {
+   -installd
+   -mediaprovider_app
+   -system_server
++  -stylusctrl
+   -adbd
+   -runas
+   -zygote

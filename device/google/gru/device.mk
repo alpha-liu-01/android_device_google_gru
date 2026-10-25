@@ -112,6 +112,7 @@ PRODUCT_VENDOR_PROPERTIES += \
 
 FORCE_USE_ANDROIDMK_FOR_WPA_CONF := true
 PRODUCT_PACKAGES += \
+    StylusCtrl \
     blkpg_resize \
     hwservicemanager \
     mapper.minigbm_upstream \
@@ -176,6 +177,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/fstab.gru:$(TARGET_COPY_OUT_RAMDISK)/fstab.gru \
     $(LOCAL_PATH)/fstab.gru:$(TARGET_COPY_OUT_VENDOR)/etc/fstab.gru \
     $(LOCAL_PATH)/init.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/init/hw/init.gru.rc \
+    $(LOCAL_PATH)/prebuilt/stylusctld:$(TARGET_COPY_OUT_SYSTEM)/bin/stylusctld \
     $(LOCAL_PATH)/init.gru.usbd.rc:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/init/init.gru.usbd.rc \
     $(LOCAL_PATH)/ueventd.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.gru.rc \
     $(LOCAL_PATH)/scripts/expand_userdata.sh:$(TARGET_COPY_OUT_VENDOR)/bin/expand_userdata.sh \
@@ -271,6 +273,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/tcp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/tcp_diag.ko \
     $(LOCAL_PATH)/modules/udp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/udp_diag.ko \
     $(LOCAL_PATH)/modules/uhid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uhid.ko \
+    $(LOCAL_PATH)/modules/uinput.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uinput.ko \
     $(LOCAL_PATH)/modules/v4l2-async.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-async.ko \
     $(LOCAL_PATH)/modules/v4l2-fwnode.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-fwnode.ko \
     $(LOCAL_PATH)/modules/v4l2-h264.ko:$(TARGET_COPY_OUT_VENDOR)/lib/v4l2-h264.ko \

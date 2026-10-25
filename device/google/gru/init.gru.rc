@@ -54,6 +54,9 @@ on early-init
     insmod /vendor/lib/ecc.ko
     insmod /vendor/lib/ecdh_generic.ko
     insmod /vendor/lib/uhid.ko
+    # stylusctld creates the virtual pen on /dev/uinput. The same module is
+    # also listed in the ramdisk modules.load for a rebuilt FIT.
+    insmod /vendor/lib/uinput.ko
     insmod /vendor/lib/bluetooth.ko
     insmod /vendor/lib/rfcomm.ko
     insmod /vendor/lib/bnep.ko
@@ -131,6 +134,8 @@ on post-fs
     chmod 0660 /dev/rfkill
     chown uhid uhid /dev/uhid
     chmod 0660 /dev/uhid
+    chown uhid uhid /dev/uinput
+    chmod 0660 /dev/uinput
     chown system system /dev/iio:device0
     chmod 0660 /dev/iio:device0
     chown system system /sys/bus/iio/devices/iio:device0/buffer/enable
@@ -206,3 +211,12 @@ service expand_userdata /vendor/bin/expand_userdata.sh
     group root system
     disabled
     oneshot
+
+# Grab is off until the settings app writes internal.enabled. stderr goes to
+# kmsg so a denial or a grab shows up in the kernel log.
+service stylusctrl /system/bin/stylusctld
+    class late_start
+    user root
+    group root input uhid
+    seclabel u:r:stylusctrl:s0
+    stdio_to_kmsg

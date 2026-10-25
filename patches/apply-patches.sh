@@ -90,6 +90,9 @@ LINEAGE_PATCH_MAP=(
     "system/sepolicy:system_sepolicy_devtmpfs_kernel_device.patch"
     "system/sepolicy:system_sepolicy_surfaceflinger_sysfs_uevent.patch"
     "system/sepolicy:system_sepolicy_sysfs_read_suspend_input.patch"
+    "system/sepolicy:system_sepolicy_stylusctrl.patch"
+    "system/sepolicy:system_sepolicy_stylusctrl_mls.patch"
+    "system/sepolicy:system_sepolicy_stylusctrl_hidraw.patch"
 )
 
 for entry in "${LINEAGE_PATCH_MAP[@]}"; do

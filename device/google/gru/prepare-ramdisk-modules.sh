@@ -32,6 +32,7 @@ for extra in (
     "kernel/drivers/phy/rockchip/phy-rockchip-inno-dsidphy.ko.xz",
     "kernel/drivers/block/loop.ko.xz",
     "kernel/net/xfrm/xfrm_user.ko.xz",
+    "kernel/drivers/input/misc/uinput.ko.xz",
 ):
     if extra not in dep:
         raise SystemExit("missing " + extra)

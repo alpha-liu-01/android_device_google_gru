@@ -22,6 +22,7 @@
 | 16 | 已修复，2026-10-23 实机验证 | 开机后第一张照片左半边是洋红色 |
 | 17 | 已修复，2026-10-23 实机验证 | DP 音频要等大约 1 秒，短音频出不来，播放中会断 |
 | 18 | 已打包，尚未刷卡验证 | 每次开机最近任务里有两个「桌面设备」 |
+| 19 | 已打包，尚未刷卡验证 | VP9 720p60 硬解几秒后花屏，左四分之一有图、右四分之三发灰 |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -224,6 +225,16 @@
 - **原因**：`config_canInternalDisplayHostDesktops` 被设成 `true`，内置屏也被当成可以承载桌面。扩展桌面开着时，系统把内置屏上的桌面写进持久化记录，开机再恢复。外接屏的扩展桌面走 `override_desktop_experience_features`、projected desktop 和 display content mode，不靠这一项。
 - **修复**：`device/google/gru/overlay/frameworks/base/core/res/res/values/config.xml` 里 `config_canInternalDisplayHostDesktops` 改为 `false`。`config_isDesktopModeSupported` 和 `config_isDesktopModeDevOptionSupported` 仍是 `true`。开机恢复时，指向内置屏的桌面会被跳过。外接屏扩展桌面保留。
 - **镜像（尚未刷卡）**：`super.img` `1,267,397,012` 字节，SHA-256 `861c44bed97e3e142b9273bfc28f26705a6b7d4e6d5d50b1c8c9e746275df5f8`。打进 overlay 的 `config_canInternalDisplayHostDesktops` 是 `false`。刷机包 `lineage-23.2-gru-20261024.zip`，`1,043,208,182` 字节，SHA-256 `caa2d3151ec0f0d8b17fc4b8a02cefc61a7243114aa023fe7c61d4340643ff34`。里面的内核分区是 `fb3e10f5bc75c3ecfd66627c2134dd722b86ef244226103447f1dae91a6d0c4f`（`13,770,752` 字节），命令行仍是 `loglevel=4` 和 `androidboot.selinux=enforcing`。卡上现在的内核还是 `6583c648`；只刷 super 不会换内核。在这份 super 刷入之前，下一次重启仍会再出现这两张。
+
+## 19. VP9 720p60 硬解几秒后花屏
+
+- **现象**：YouTube 的 VP9 1280×720 60 帧（itag 302）用 `c2.v4l2.vp9.decoder` 硬解，PipePipe 和 MX Player Pro 都一样。声音正常。画面有时正常，有时左边四分之一是一块颜色，右边四分之三发灰，灰里还能看到淡淡的轮廓在动。同一个文件在 PC 和 Windows 的硬解上都正常。
+- **现场（2026-10-30 15:34，`10.0.0.108:5555`，正在播《A TEMPEST In AT-Cup: The IBM TPC》）**：codec 服务打出 `Format changed: coded 1280x768, visible (0,0)-(1280,720), 12 min frames`，布局 `Y offset 0 stride 1280, UV offset 983040 stride 1280`，跨距没有问题。内核日志里没有 rkvdec 或 IOMMU 的报错；rkvdec 解坏的帧只标 `VB2_BUF_STATE_ERROR`，不打印。左边那四分之一正好是 320 像素：这路码流每帧都是 `tile_cols_log2 = 2`，四个 tile 列。
+- **码流**：`frame_parallel_decoding_mode = 0`、`refresh_frame_context = 1`，压缩头每帧只有 3 字节，概率全靠后向自适应。帧上下文用到 0、1、2 三个。每 15 帧有一帧 `refresh_frame_flags = 0` 的显示帧（不当参考），紧跟着一个超帧：先是隐藏的 ARF（`show_frame = 0`，`refresh_frame_flags = 4`），再是显示帧。
+- **逐帧对比**：取视频开头 60 秒，在机器上用 `ImageReader` 接 `c2.v4l2.vp9.decoder` 的输出，逐帧算可见区 Y 平面的 MD5，和 PC 上 libvpx、ffmpeg 软解（两者 3600 帧完全一致）对比。前 600 帧里 44 帧一致：第 0–14 帧逐位相同，第 15 帧开始不同，一直错到第 360 帧的关键帧；第 360–373 帧又相同，第 374 帧再错。第 15 帧只差在人物动的那一块（tile 列 1、2），平均每像素差 0.11，属于预测漂移，不是码流读错。之后误差随参考帧和后向自适应越积越多，就成了上面那种画面。
+- **原因**：第 14 帧（解码顺序第 15 帧）是不当参考的显示帧，下一包超帧里的隐藏 ARF 按 VP9 规则要用它的运动矢量做候选（尺寸相同、上一帧显示过、不是 error resilient）。rkvdec 在 `config_registers()` 里按 `vp9_ctx->last.timestamp` 用 `vb2_find_buffer()` 找上一帧的 CAPTURE 缓冲，从 YUV 后面读 co-located MV。cros-codecs 只把参考帧挂在新帧的 `ref_pictures` 上，不当参考的帧一输出就放掉，它的 V4L2 槽位和 dmabuf 会立刻被下一帧拿走。内核按时间戳找不到，回退到当前目标缓冲自己的 MV 区，ARF 解坏，后面引用它的帧跟着错。第 374 帧前面也是同样的排列（第 400 帧不当参考、第 401 帧隐藏 ARF）。H.264 的 co-located MV 来自参考列表里的帧，本来就挂着，不受影响。
+- **修复**：`system/cros-codecs` 的 `V4l2StatelessDecoderBackend` 记下上一个提交解码的画面 `last_picture`。VP9 的 `submit_picture()` 把它也放进新帧的 `ref_pictures`，等新帧的 CAPTURE 缓冲出队后再释放，和参考帧同一套机制。`new_sequence()` 和 `reset_backend()` 在重置队列之前清掉它。补丁合进 `patches/system_cros-codecs_v4l2_stateless_fixes_and_ffi.patch`。内核和 minigbm 不用改。
+- **镜像（尚未刷卡）**：`super.img` `1,267,397,012` 字节，SHA-256 `6faf83ed10f6c7be043c236421c0d9b4645bb28570f99334b065cb3d29b0cc8f`。内核分区不用换。刷入后用同一段 60 秒、同样的逐帧对比，600 帧应当全部和软解一致。
 
 ## 一并放行、这次启动已经不再出现的拒绝
 

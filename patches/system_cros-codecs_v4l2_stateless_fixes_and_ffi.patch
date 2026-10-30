@@ -555,7 +555,7 @@ index 72b119d..7aa3bf8 100644
      fn range(&self) -> ColorRange;
      fn primaries(&self) -> ColorPrimaries;
 diff --git a/src/backend/v4l2/decoder/stateless.rs b/src/backend/v4l2/decoder/stateless.rs
-index a810ce4..5ae76d3 100644
+index a810ce4..98ac978 100644
 --- a/src/backend/v4l2/decoder/stateless.rs
 +++ b/src/backend/v4l2/decoder/stateless.rs
 @@ -76,10 +76,12 @@ pub struct V4l2StatelessDecoderHandle<V: VideoFrame> {
@@ -572,13 +572,33 @@ index a810ce4..5ae76d3 100644
          }
      }
  }
-@@ -165,7 +167,12 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
+@@ -130,6 +132,10 @@ pub struct V4l2StatelessDecoderBackend<V: VideoFrame> {
+     pub device: V4l2Device<V>,
+     pub stream_info: StreamInfo,
+     pub frame_counter: u64,
++    /// Last picture submitted for decoding. rkvdec reads the co-located motion vectors of the
++    /// previous decoded frame from its CAPTURE buffer, found by timestamp, even when that frame
++    /// is not a reference, so the buffer must stay dequeued until the next frame is decoded.
++    pub last_picture: Option<Rc<RefCell<V4l2Picture<V>>>>,
+ }
+ 
+ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
+@@ -149,6 +155,7 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
+                 encryption_scheme: EncryptionScheme::Unencrypted,
+             },
+             frame_counter: 0,
++            last_picture: None,
+         })
+     }
+ 
+@@ -165,7 +172,13 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
          let coded_resolution = stream_params.coded_size().clone();
          let min_num_frames = stream_params.min_num_frames();
  
 -        self.device.initialize_output_queue(fourcc, coded_resolution)?;
 +        // A flush followed by a key frame with a new format starts a sequence without going
 +        // through reset_backend(), so the queues may still be streaming the previous one.
++        self.last_picture = None;
 +        self.device.reset_queues().map_err(|e| StatelessBackendError::Other(e.into()))?;
 +        self.device.initialize_output_queue(fourcc, coded_resolution, |device| {
 +            stream_params.set_stream_controls(device)
@@ -586,7 +606,7 @@ index a810ce4..5ae76d3 100644
  
          let format = stream_params
              .get_decoded_format(self.device.get_video_device())
-@@ -184,7 +191,14 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
+@@ -184,7 +197,14 @@ impl<V: VideoFrame> V4l2StatelessDecoderBackend<V> {
          self.stream_info.transfer = stream_params.transfer();
          self.stream_info.matrix = stream_params.matrix();
  
@@ -602,6 +622,14 @@ index a810ce4..5ae76d3 100644
      }
  }
  
+@@ -197,6 +217,7 @@ impl<V: VideoFrame> StatelessDecoderBackend for V4l2StatelessDecoderBackend<V> {
+     }
+ 
+     fn reset_backend(&mut self) -> anyhow::Result<()> {
++        self.last_picture = None;
+         Ok(self.device.reset_queues()?)
+     }
+ }
 diff --git a/src/c2_wrapper/c2_decoder.rs b/src/c2_wrapper/c2_decoder.rs
 index 0e7f116..38a4892 100644
 --- a/src/c2_wrapper/c2_decoder.rs
@@ -993,7 +1021,7 @@ index 9dadf43..b49a508 100644
          self.vui_parameters.video_full_range_flag.into()
      }
 diff --git a/src/decoder/stateless/vp9/v4l2.rs b/src/decoder/stateless/vp9/v4l2.rs
-index 5c5ca9e..9927be1 100644
+index 5c5ca9e..a861393 100644
 --- a/src/decoder/stateless/vp9/v4l2.rs
 +++ b/src/decoder/stateless/vp9/v4l2.rs
 @@ -36,7 +36,9 @@ use crate::decoder::stateless::StatelessDecoderBackendPicture;
@@ -1006,7 +1034,7 @@ index 5c5ca9e..9927be1 100644
  use crate::device::v4l2::stateless::controls::vp9::Vp9V4l2Control;
  use crate::video_frame::VideoFrame;
  use crate::ColorPrimaries;
-@@ -185,10 +187,14 @@ impl<V: VideoFrame> StatelessVp9DecoderBackend for V4l2StatelessDecoderBackend<V
+@@ -185,16 +187,23 @@ impl<V: VideoFrame> StatelessVp9DecoderBackend for V4l2StatelessDecoderBackend<V
          let mut request = request.as_ref().borrow_mut();
  
          // We have to do this manually since v4l2r does not directly support VP9
@@ -1023,6 +1051,15 @@ index 5c5ca9e..9927be1 100644
          let mut reference_pictures = Vec::<Rc<RefCell<V4l2Picture<V>>>>::new();
          for frame in reference_frames {
              if frame.is_some() {
+                 reference_pictures.push(frame.as_ref().unwrap().picture.clone());
+             }
+         }
++        if let Some(last_picture) = self.last_picture.replace(picture.clone()) {
++            reference_pictures.push(last_picture);
++        }
+         picture.borrow_mut().set_ref_pictures(reference_pictures);
+ 
+         request.write(bitstream);
 diff --git a/src/device/v4l2/stateless/controls/vp9.rs b/src/device/v4l2/stateless/controls/vp9.rs
 index 958c2a0..66be7c2 100644
 --- a/src/device/v4l2/stateless/controls/vp9.rs

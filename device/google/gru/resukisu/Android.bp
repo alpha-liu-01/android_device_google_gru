@@ -1,0 +1,14 @@
+android_app_import {
+    name: "ReSukiSU",
+    apk: "ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk",
+    presigned: true,
+    preprocessed: true,
+    skip_preprocessed_apk_checks: true,
+    system_ext_specific: true,
+    optional_uses_libs: [
+        "androidx.window.extensions",
+        "androidx.window.sidecar",
+    ],
+    // The file Soong reads must be a regular file. A symlink is preserved
+    // into system_ext and EROFS stores that symlink.
+}

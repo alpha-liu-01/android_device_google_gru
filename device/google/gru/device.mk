@@ -113,6 +113,7 @@ PRODUCT_VENDOR_PROPERTIES += \
 FORCE_USE_ANDROIDMK_FOR_WPA_CONF := true
 PRODUCT_PACKAGES += \
     StylusCtrl \
+    ReSukiSU \
     blkpg_resize \
     hwservicemanager \
     mapper.minigbm_upstream \
@@ -140,6 +141,11 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.wifi.direct.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.direct.xml \
     frameworks/native/data/etc/android.hardware.wifi.passpoint.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.wifi.passpoint.xml \
     $(LOCAL_PATH)/wpa_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/wpa_supplicant_overlay.conf \
+    $(LOCAL_PATH)/resukisu/lib/arm64/libkernelsu.so:$(TARGET_COPY_OUT_SYSTEM_EXT)/app/ReSukiSU/lib/arm64/libkernelsu.so \
+    $(LOCAL_PATH)/resukisu/lib/arm64/libksud.so:$(TARGET_COPY_OUT_SYSTEM_EXT)/app/ReSukiSU/lib/arm64/libksud.so \
+    $(LOCAL_PATH)/resukisu/lib/arm64/libadbroot.so:$(TARGET_COPY_OUT_SYSTEM_EXT)/app/ReSukiSU/lib/arm64/libadbroot.so \
+    $(LOCAL_PATH)/resukisu/lib/arm64/libandroidx.graphics.path.so:$(TARGET_COPY_OUT_SYSTEM_EXT)/app/ReSukiSU/lib/arm64/libandroidx.graphics.path.so \
+    $(LOCAL_PATH)/resukisu/lib/arm64/libdatastore_shared_counter.so:$(TARGET_COPY_OUT_SYSTEM_EXT)/app/ReSukiSU/lib/arm64/libdatastore_shared_counter.so \
     $(LOCAL_PATH)/p2p_supplicant_overlay.conf:$(TARGET_COPY_OUT_VENDOR)/etc/wifi/p2p_supplicant_overlay.conf \
     $(LOCAL_PATH)/etc/audio_policy_configuration.xml:$(TARGET_COPY_OUT_VENDOR)/etc/audio_policy_configuration.xml \
     $(LOCAL_PATH)/etc/media_codecs_c2.xml:$(TARGET_COPY_OUT_VENDOR)/etc/media_codecs_c2.xml \
@@ -171,6 +177,7 @@ PRODUCT_COPY_FILES += \
     frameworks/native/data/etc/android.hardware.sensor.gyroscope.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.sensor.gyroscope.xml \
     frameworks/native/data/etc/android.software.print.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.print.xml \
     frameworks/native/data/etc/android.software.device_admin.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.device_admin.xml \
+    frameworks/native/data/etc/android.software.secure_lock_screen.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.software.secure_lock_screen.xml \
     frameworks/native/data/etc/android.hardware.keystore.app_attest_key.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.keystore.app_attest_key.xml
 
 PRODUCT_COPY_FILES += \

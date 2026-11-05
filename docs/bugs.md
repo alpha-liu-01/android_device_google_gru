@@ -23,7 +23,7 @@
 | 17 | 已修复，2026-10-23 实机验证 | DP 音频要等大约 1 秒，短音频出不来，播放中会断 |
 | 18 | 已打包，尚未刷卡验证 | 每次开机最近任务里有两个「桌面设备」 |
 | 19 | 已修复，2026-10-30 实机验证 | VP9 720p60 硬解几秒后花屏，左四分之一有图、右四分之三发灰 |
-| 20 | 已修复，2026-11-05 实机验证 | 睡眠后 Wi-Fi 断开 |
+| 20 | 已撤回，2026-11-05 实机确认回到睡眠断开 | 睡眠后 Wi-Fi 断开 |
 | 21 | 已修复，2026-11-05 实机验证 | 设置里只能选「无」和「滑动」，不能设锁屏密码 |
 | 22 | 已修复，2026-11-05 实机验证 | 系统里没有 ReSukiSU |
 
@@ -245,8 +245,11 @@
 - **现象**：机器睡眠之后无线网断开，唤醒要重新关联。Kukui 上同一条是 `wowlan_triggers=disconnect magic_pkt`。
 - **Gru 上的对应关系**：网卡是 `ath10k_pci` QCA6174 hw3.2，固件 `WLAN.RM.4.4.1-00309`，内核日志里的 features 已经带 `wowlan`。走的是 PCIe。Kukui 那次 `failed to start wow: -110` 出在 SDIO 上，这条超时不搬过来。
 - **修复**：`device/google/gru/wpa_supplicant_overlay.conf` 加上 `wowlan_triggers=disconnect magic_pkt`。这份 overlay 装到 `vendor/etc/wifi/wpa_supplicant_overlay.conf`，wpa_supplicant 每次启动都读。现有 userdata 里的 `wpa_supplicant.conf` 不用清。
-- **实机（2026-11-05）**：刷入这份 super 之后，睡眠再唤醒，无线网仍然连着。
+- **实机（2026-11-05 短睡眠）**：刷入 `f84f47d2` 这份 super 之后，短时间睡眠再唤醒，无线网仍然连着。
 - **镜像**：`super.img` `1,285,591,444` 字节，SHA-256 `f84f47d2adbb1a3490b5411a792b7b4c6627dd1467bafccebf96a9d5d3c36020`。完整刷机包 `lineage-23.2-gru-20261105.zip`，`1,059,827,756` 字节，SHA-256 `bb3e65a834b1059a8608f9fc876680627e19fe4e48d3bba9ed39364d1d3a8e46`。
+- **撤回（2026-11-05）**：长睡眠会停在正在获取 IP 地址。随后两次只换 `ath10k_core.ko` 的 super（`6021febb`、`2d0ea056`）也没稳住连接。`2d0ea056` 睡眠时机器直接回到 bootloader，然后自己进了 postmarketOS。锁屏保持连接这条先撤回。`wowlan_triggers=disconnect magic_pkt` 从 overlay 去掉，`ath10k_core.ko` 回到 `d1e1257` 里的那份（SHA-256 `deca10531b130bef08a2b9e39bdd62f223b142fb455c78b8d435fa6c5cabd832`）。内核里的 WoW 补丁已反向撤掉。内核分区不用换。睡眠之后无线网会断开，亮屏再重新关联。
+- **新镜像**：`super.img` `1,285,591,444` 字节，SHA-256 `de91f1a00c2810b4a458e53257ef7898b0d48187ac0a96815b4fe49cdc800e1a`。`vendor.img` 比它早 9 秒。lunch 是 `lineage_gru-bp4a-userdebug`。vendor 里的 overlay 只有 `disable_scan_offload`、`p2p_disabled`、`tdls_external_control`。2026-11-05 刷入后，无线网回到睡眠断开、亮屏再关联。
+- **分发包**：`lineage-23.2-gru-20261105-2.zip`，`1,059,827,874` 字节，SHA-256 `52647675953c2ff2fbe8abe1fa8618768f9418000b32b1fc737faf2e311e5615`。原始镜像 `11,274,289,152` 字节。里面的内核分区是 `39a7659a9343de05e1676cb3afe6fdafb0bf22a180bbb40306115e558039236f`（`14,090,240` 字节）。打包时 FIT 会重新签名，所以这个校验和和卡上那份不同；内核 Image 仍是 `cb61bf069790f4eae9c1ba2c489772262f56f4836097ec96807801971e73e9d4`，命令行仍是 `loglevel=4` 和 `androidboot.selinux=enforcing`。早先的 `lineage-23.2-gru-20261105.zip`（`bb3e65a8`）还在，那一份带有已经撤回的 `wowlan_triggers`。这份 zip 也带上第 18 节的桌面卡片修复，以及第 21、22 节。
 
 ## 21. 设置里只能选「无」和「滑动」，不能设锁屏密码
 

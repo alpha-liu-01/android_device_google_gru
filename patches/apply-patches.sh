@@ -4,6 +4,14 @@
 #
 # Usage:
 #   ./patches/apply-patches.sh /path/to/lineage-23.2 [/path/to/linux-6.6.34]
+#
+# This checkout is shared with Kukui. Before building Gru, reverse the Kukui
+# patches that replace Gru's audio HAL, healthd fallbacks, and decoder:
+#   android_device_google_kukui/patches/apply-patches.sh --reverse /path/to/lineage-23.2
+# Then run this script. Kukui's device tree stays linked. This script holds
+# aside Kukui's ReSukiSU Android.bp and the camera prebuilts Android.bp,
+# which otherwise take Gru's Soong module names. Kukui's apply-patches.sh
+# links those files back.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,6 +42,20 @@ fi
 echo "=== Syncing device/google/gru ==="
 mkdir -p "${LINEAGE_ROOT}/device/google/gru"
 rsync -a --delete "${REPO_ROOT}/device/google/gru/" "${LINEAGE_ROOT}/device/google/gru/"
+
+# Kukui's tree stays linked in this checkout. Two of its Android.bp files
+# steal Soong module names Gru builds itself: ReSukiSU, and the camera
+# prebuilts (libcamera, camera.libcamera) marked prefer:true. Hold those
+# files aside. Kukui's apply-patches.sh links them back when the path is gone.
+hold_kukui_bp() {
+    local bp="$1"
+    if [[ -e "${bp}" || -L "${bp}" ]]; then
+        mv "${bp}" "${bp}.held-for-kukui"
+        echo "[OK]    held ${bp#${LINEAGE_ROOT}/} so Gru keeps its own module"
+    fi
+}
+hold_kukui_bp "${LINEAGE_ROOT}/device/google/kukui/resukisu/Android.bp"
+hold_kukui_bp "${LINEAGE_ROOT}/device/google/kukui/Android.bp"
 
 apply_patch() {
     local target_dir="$1"

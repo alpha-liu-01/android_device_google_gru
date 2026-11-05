@@ -90,3 +90,7 @@ BOARD_GRU_DYNAMIC_PARTITIONS_PARTITION_LIST := system vendor system_ext product 
 # The GPT userdata partition is larger. This image is a placeholder; the
 # write step formats the whole partition.
 BOARD_USERDATAIMAGE_PARTITION_SIZE := 4294967296
+
+# libksud.so is executed by the manager. PRODUCT_COPY_FILES installs it 0644,
+# and system_ext is erofs, so the mode has to be set here.
+TARGET_FS_CONFIG_GEN += $(DEVICE_PATH)/config.fs

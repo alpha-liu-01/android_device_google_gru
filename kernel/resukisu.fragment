@@ -1,0 +1,17 @@
+# ReSukiSU v4.2.0-rc3, manual hooks. This kernel is 6.6.34 non-GKI.
+# Tracepoint hook and the two automatic LSM hooks are not usable the same way
+# kukui uses them on 6.18. SuSFS stays off.
+
+CONFIG_KALLSYMS_ALL=y
+
+CONFIG_KSU=y
+CONFIG_KSU_MANUAL_HOOK=y
+# CONFIG_KSU_MANUAL_HOOK_AUTO_SETUID_HOOK is not set
+# CONFIG_KSU_MANUAL_HOOK_AUTO_INITRC_HOOK is not set
+CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK=y
+# CONFIG_KSU_TRACEPOINT_HOOK is not set
+# CONFIG_KSU_SUSFS is not set
+# CONFIG_KSU_TOOLKIT_SUPPORT is not set
+# CONFIG_KSU_DISABLE_MANAGER is not set
+# CONFIG_KSU_DISABLE_POLICY is not set
+CONFIG_KSU_MULTI_MANAGER_SUPPORT=y

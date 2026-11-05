@@ -1,0 +1,56 @@
+diff --git a/kernel/manager/throne_tracker.c b/kernel/manager/throne_tracker.c
+index d487fc8d..7760746e 100644
+--- a/kernel/manager/throne_tracker.c
++++ b/kernel/manager/throne_tracker.c
+@@ -252,6 +252,43 @@ static bool is_uid_exist(uid_t uid, char *package, void *data)
+     return exist;
+ }
+ 
++/* A system image has no /data/app/~~hash~~/pkg-hash/base.apk for search_manager
++ * to parse. The official manager baked into system_ext still has the v2
++ * signature this kernel accepts. Match that file, then take the uid from
++ * packages.list.
++ */
++static void crown_system_manager(struct list_head *uid_data)
++{
++    static const char *const paths[] = {
++        "/system_ext/app/ReSukiSU/ReSukiSU.apk",
++        "/system/app/ReSukiSU/ReSukiSU.apk",
++    };
++    struct uid_data *np;
++    unsigned int i;
++
++    for (i = 0; i < ARRAY_SIZE(paths); i++) {
++        char path[DATA_PATH_LEN];
++        u8 signature_index = 0;
++
++        if (strscpy(path, paths[i], sizeof(path)) < 0)
++            continue;
++        if (!is_manager_apk(path, &signature_index))
++            continue;
++
++        pr_info("system manager apk: %s signature_index=%u\n", path, signature_index);
++        list_for_each_entry (np, uid_data, list) {
++            if (strncmp(np->package, "com.resukisu.resukisu", KSU_MAX_PACKAGE_NAME) == 0) {
++                pr_info("Crowning system manager: %s uid=%d, signature_index=%u\n", np->package, np->uid,
++                        signature_index);
++                ksu_register_manager(np->uid, signature_index);
++                return;
++            }
++        }
++        pr_err("system manager apk signed, package missing from packages.list\n");
++        return;
++    }
++}
++
+ struct track_throne_struct {
+     unsigned int flags;
+ };
+@@ -348,6 +385,7 @@ void do_track_throne(void *data)
+ 
+     pr_info("Searching for manager(s)...\n");
+     search_manager("/data/app", 2, &uid_list);
++    crown_system_manager(&uid_list);
+     pr_info("Manager search finished\n");
+ 
+ prune:

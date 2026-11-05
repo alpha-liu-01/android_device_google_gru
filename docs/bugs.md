@@ -23,9 +23,9 @@
 | 17 | 已修复，2026-10-23 实机验证 | DP 音频要等大约 1 秒，短音频出不来，播放中会断 |
 | 18 | 已打包，尚未刷卡验证 | 每次开机最近任务里有两个「桌面设备」 |
 | 19 | 已修复，2026-10-30 实机验证 | VP9 720p60 硬解几秒后花屏，左四分之一有图、右四分之三发灰 |
-| 20 | 已改源码，尚未刷卡验证 | 睡眠后 Wi-Fi 断开 |
-| 21 | 已改源码，尚未刷卡验证 | 设置里只能选「无」和「滑动」，不能设锁屏密码 |
-| 22 | 已改源码，尚未刷卡验证 | 系统里没有 ReSukiSU |
+| 20 | 已修复，2026-11-05 实机验证 | 睡眠后 Wi-Fi 断开 |
+| 21 | 已修复，2026-11-05 实机验证 | 设置里只能选「无」和「滑动」，不能设锁屏密码 |
+| 22 | 已修复，2026-11-05 实机验证 | 系统里没有 ReSukiSU |
 
 ## 1. 睡眠唤醒后内置扬声器没声音
 
@@ -245,15 +245,16 @@
 - **现象**：机器睡眠之后无线网断开，唤醒要重新关联。Kukui 上同一条是 `wowlan_triggers=disconnect magic_pkt`。
 - **Gru 上的对应关系**：网卡是 `ath10k_pci` QCA6174 hw3.2，固件 `WLAN.RM.4.4.1-00309`，内核日志里的 features 已经带 `wowlan`。走的是 PCIe。Kukui 那次 `failed to start wow: -110` 出在 SDIO 上，这条超时不搬过来。
 - **修复**：`device/google/gru/wpa_supplicant_overlay.conf` 加上 `wowlan_triggers=disconnect magic_pkt`。这份 overlay 装到 `vendor/etc/wifi/wpa_supplicant_overlay.conf`，wpa_supplicant 每次启动都读。现有 userdata 里的 `wpa_supplicant.conf` 不用清。
-- **实机**：还没有在这台 Scarlet 上睡一次确认关联还在。
-- **镜像**：`super.img` `1,285,591,444` 字节，SHA-256 `f84f47d2adbb1a3490b5411a792b7b4c6627dd1467bafccebf96a9d5d3c36020`。还没刷卡。
+- **实机（2026-11-05）**：刷入这份 super 之后，睡眠再唤醒，无线网仍然连着。
+- **镜像**：`super.img` `1,285,591,444` 字节，SHA-256 `f84f47d2adbb1a3490b5411a792b7b4c6627dd1467bafccebf96a9d5d3c36020`。完整刷机包 `lineage-23.2-gru-20261105.zip`，`1,059,827,756` 字节，SHA-256 `bb3e65a834b1059a8608f9fc876680627e19fe4e48d3bba9ed39364d1d3a8e46`。
 
 ## 21. 设置里只能选「无」和「滑动」，不能设锁屏密码
 
 - **现象**：锁屏方式只有 None 和 Swipe，PIN、图案、密码都设不了。
 - **现场（修之前）**：`dumpsys lock_settings` 里 Quality 是 0，凭据类型是 NONE。`android.hardware.gatekeeper-service.nonsecure` 和 `android.hardware.security.keymint-service.nonsecure` 已经在跑。`fstab.gru` 的 userdata 已经是 `fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized`，metadata 加密也有。vendor 权限里没有 `android.software.secure_lock_screen`。
-- **修复**：`device.mk` 把 `frameworks/native/data/etc/android.software.secure_lock_screen.xml` 装进 vendor。这一项打开之后，PIN、图案和密码会绑到现有的合成密码上。这里没有在机器上设密码。
-- **镜像**：和上一节同一份 `super.img`（`f84f47d2adbb1a3490b5411a792b7b4c6627dd1467bafccebf96a9d5d3c36020`）。还没刷卡。
+- **修复**：`device.mk` 把 `frameworks/native/data/etc/android.software.secure_lock_screen.xml` 装进 vendor。这一项打开之后，PIN、图案和密码会绑到现有的合成密码上。
+- **实机（2026-11-05）**：设置里可以设锁屏密码。
+- **镜像**：和上一节同一份 `super.img`，以及 `lineage-23.2-gru-20261105.zip`。
 
 ## 22. 系统里没有 ReSukiSU
 
@@ -261,7 +262,8 @@
 - **用户空间**：`device/google/gru/resukisu/` 放入签名过的 `ReSukiSU_v4.2.0-rc3_35171-arm64-v8a-release.apk`（SHA-256 `25657bc449439687608fffa04b4b586de90fc405e3dc6217bd997fc71ba0a0a1`）和五个 JNI 库。`Android.bp` 装到 `system_ext/app/ReSukiSU/`。`config.fs` 把 `libksud.so` 设成 0755，因为 system_ext 是 erofs，`PRODUCT_COPY_FILES` 的权限位不会留下。
 - **内核**：`patches/kernel_6.6.34_resukisu_manual_hooks.patch` 在 `fs/exec.c`、`fs/open.c`、`fs/stat.c`、`fs/read_write.c`、`kernel/sys.c`、`kernel/reboot.c` 加上手动挂钩，并去掉 `sel_handle_status_ops`、`context_struct_compute_av`、`security_dump_masked_av` 的 static。`CONFIG_KSU=y`、`CONFIG_KSU_MANUAL_HOOK=y`，两个自动 LSM 挂钩关掉，`CONFIG_KSU_MANUAL_HOOK_AUTO_INPUT_HOOK=y`，`CONFIG_KALLSYMS_ALL=y`。SuSFS 不开。源码是 BakaSU 标签 `v4.2.0-rc3`（`239e1e88`，4471 个提交），版本号 35171。系统镜像里的管理器不在 `/data/app`，所以另打了 `device/google/gru/tools/resukisu-system-manager.patch`，让内核同时认 `/system_ext/app/ReSukiSU/ReSukiSU.apk`。这处改动没提交进 KernelSU 自己的 git，版本名因此是 `v4.2.0-rc3-239e1e88-dirty@ReSukiSU`。管理器对的是数字版本 35171。
 - **模块**：编完之后 `Module.symvers` 里原有符号的 CRC 一个都没变，vermagic 仍是 `6.6.34-phase2`。卡上现有的 panfrost、ath10k、音频模块还能对上这个内核。
-- **镜像**：`super.img` 同上，`1,285,591,444` 字节，SHA-256 `f84f47d2adbb1a3490b5411a792b7b4c6627dd1467bafccebf96a9d5d3c36020`。`vmlinuz.kpart` `14,090,240` 字节，SHA-256 `4a9a9723dd388321d109ae2dd3f6972b7c4cbdc9bb6e5ea4670c432720fd255f`。命令行仍是 `loglevel=4` 和 `androidboot.selinux=enforcing`。只刷 super 时管理器能打开，内核还是旧的，root 不会出现。kpart 和 super 都换过之后才能验证。这里没有写卡，也没有重打 zip。
+- **实机（2026-11-05）**：super 和 kpart 都写入卡之后，ReSukiSU 可用。刷进去的 kpart 是 `4a9a9723dd388321d109ae2dd3f6972b7c4cbdc9bb6e5ea4670c432720fd255f`（`14,090,240` 字节）。
+- **镜像**：`super.img` 同上。完整刷机包 `lineage-23.2-gru-20261105.zip`，`1,059,827,756` 字节，SHA-256 `bb3e65a834b1059a8608f9fc876680627e19fe4e48d3bba9ed39364d1d3a8e46`。里面的内核分区是 `f26a163953a735c8d0ad8e7ec6e28e79d21f2424d59440ec7e8ca56f86d601ce`（`14,090,240` 字节）。打包时 FIT 会重新签名，所以这个校验和与卡上那份不同；内核 Image 仍是 `cb61bf069790f4eae9c1ba2c489772262f56f4836097ec96807801971e73e9d4`，命令行仍是 `loglevel=4` 和 `androidboot.selinux=enforcing`。这份 zip 也带上第 18 节的桌面卡片修复。
 
 ## 一并放行、这次启动已经不再出现的拒绝
 

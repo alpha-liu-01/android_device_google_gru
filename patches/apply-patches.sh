@@ -139,6 +139,7 @@ if [[ -n "${KERNEL_ROOT}" ]]; then
         "kernel_6.6.34_rockchip_i2s_s3_mclk.patch"
         "kernel_6.6.34_dp_audio_avout_jack.patch"
         "kernel_6.6.34_panfrost_devfreq_busy_scale.patch"
+        "kernel_6.6.34_cgroup_v1_cap_sys_nice.patch"
     )
     for kp in "${KERNEL_PATCHES[@]}"; do
         apply_patch "${KERNEL_ROOT}" "${PATCH_DIR}/${kp}"

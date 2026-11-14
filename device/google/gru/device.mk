@@ -27,6 +27,11 @@ TARGET_USB_INIT_SCRIPT := none
 # Codec2 HAL for the rkvdec/hantro stateless decoders, backed by cros-codecs.
 TARGET_MEDIA_C2_HAL := v4l2_codec2
 TARGET_V4L2_CODEC2_USE_EXAMPLE_CONFIGURATION := false
+# Lineage libperfmgr. The shared product makefile also installs the module
+# named powerhint.json, and that name already belongs to Kukui. Gru's table
+# is powerhint-gru.json. init.gru.rc points vendor.powerhal.config at it
+# before the HAL starts on late-fs.
+TARGET_POWER_HAL := perfmgr-lineage
 include device/mainline/common/optional/options.mk
 SUPPORTS_INLINE_KERNEL_BUILDING := false
 
@@ -189,6 +194,8 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/ueventd.gru.rc:$(TARGET_COPY_OUT_VENDOR)/etc/ueventd.gru.rc \
     $(LOCAL_PATH)/scripts/expand_userdata.sh:$(TARGET_COPY_OUT_VENDOR)/bin/expand_userdata.sh \
     $(LOCAL_PATH)/scripts/boot_settings.sh:$(TARGET_COPY_OUT_VENDOR)/bin/boot_settings.sh \
+    $(LOCAL_PATH)/scripts/gru-ids.sh:$(TARGET_COPY_OUT_VENDOR)/bin/gru-ids.sh \
+    $(LOCAL_PATH)/power/powerhint.json:$(TARGET_COPY_OUT_VENDOR)/etc/powerhint-gru.json \
     $(LOCAL_PATH)/firmware/rockchip/dptx.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/rockchip/dptx.bin \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board-2.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board-2.bin \
     $(LOCAL_PATH)/firmware/ath10k/QCA6174/hw3.0/board.bin:$(TARGET_COPY_OUT_VENDOR)/firmware/ath10k/QCA6174/hw3.0/board.bin \
@@ -256,6 +263,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/rockchip-vdec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip-vdec.ko \
     $(LOCAL_PATH)/modules/rockchip_thermal.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rockchip_thermal.ko \
     $(LOCAL_PATH)/modules/rtc-cros-ec.ko:$(TARGET_COPY_OUT_VENDOR)/lib/rtc-cros-ec.ko \
+    $(LOCAL_PATH)/modules/sch_ingress.ko:$(TARGET_COPY_OUT_VENDOR)/lib/sch_ingress.ko \
     $(LOCAL_PATH)/modules/snd-hwdep.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-hwdep.ko \
     $(LOCAL_PATH)/modules/snd-pcm-dmaengine.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-pcm-dmaengine.ko \
     $(LOCAL_PATH)/modules/snd-pcm.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd-pcm.ko \
@@ -278,6 +286,7 @@ PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/modules/snd.ko:$(TARGET_COPY_OUT_VENDOR)/lib/snd.ko \
     $(LOCAL_PATH)/modules/soundcore.ko:$(TARGET_COPY_OUT_VENDOR)/lib/soundcore.ko \
     $(LOCAL_PATH)/modules/tcp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/tcp_diag.ko \
+    $(LOCAL_PATH)/modules/tun.ko:$(TARGET_COPY_OUT_VENDOR)/lib/tun.ko \
     $(LOCAL_PATH)/modules/udp_diag.ko:$(TARGET_COPY_OUT_VENDOR)/lib/udp_diag.ko \
     $(LOCAL_PATH)/modules/uhid.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uhid.ko \
     $(LOCAL_PATH)/modules/uinput.ko:$(TARGET_COPY_OUT_VENDOR)/lib/uinput.ko \

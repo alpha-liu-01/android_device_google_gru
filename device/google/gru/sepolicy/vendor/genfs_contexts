@@ -23,5 +23,9 @@ genfscon sysfs /class/video4linux u:object_r:sysfs_v4l:s0
 genfscon sysfs /devices/platform/ff650000.video-codec u:object_r:sysfs_v4l:s0
 genfscon sysfs /devices/platform/ff660000.video-codec u:object_r:sysfs_v4l:s0
 
+# Only the serial file. The rest of the VPD, including the device secret,
+# stays the generic sysfs type.
+genfscon sysfs /firmware/vpd/ro/serial_number u:object_r:vendor_sysfs_vpd_serial:s0
+
 # External microSD. storaged reads stat; init writes discard_max_bytes.
 genfscon sysfs /devices/platform/fe320000.mmc u:object_r:sysfs_devices_block:s0

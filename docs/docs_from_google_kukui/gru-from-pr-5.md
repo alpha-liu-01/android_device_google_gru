@@ -120,7 +120,11 @@ VOP 一次只能扫一块 AFBC。原先的打算是带 `HW_TEXTURE` 的窗口保
 
 实现笔记：
 
+2026-11-14。运行中的内核是 6.6.34-phase2，`/proc/config.gz` 里 `CONFIG_TUN=m`。`tun.ko` 用 `/home/alpha/src/gru-phase2/linux-6.6.34` 重新编，vermagic 是 `6.6.34-phase2 SMP preempt mod_unload modversions aarch64`，SHA-256 `6085b34bcdb13b141906da25e8e4264b36e3767e856ef3ac8b00f413ece580de`。在当前系统上 `insmod` 之后，dmesg 是 `tun: Universal TUN/TAP device driver, 1.6`。`/dev/tun` 是 `10,200`，属主 `system:vpn`，标签 `u:object_r:tun_device:s0`，打开成功。`/dev/net/tun` 仍指向 `../tun`。模块放在 `/vendor/lib/tun.ko`，`device.mk` 按 `af_key.ko` 拷贝，`init.gru.rc` 在 early-init 里 `insmod`。ramdisk 的 `modules.mk` 会进内核分区，这次没有改它。`super.img` 1,285,661,076 字节，SHA-256 `fb66d2e04ebce9a9acfba36f92b6a0e5d376a9732057db927ca714b08f9faf4d`。镜像里的两个 `.ko` 和上面的哈希一致。内核分区没有换。
+
 事件：
+
+2026-11-14 13:50，`10.0.0.103`，`ro.build.date` 是 Sat Nov 14 13:21:38 EST 2026。`/vendor/lib/tun.ko` 的 SHA-256 与上面一致。开机后 6.3 秒 dmesg 是 `tun: Universal TUN/TAP device driver, 1.6`。`/dev/tun` 是 `10,200`，属主 `system:vpn`，标签 `u:object_r:tun_device:s0`。v2rayNG 连上一个香港节点。13:44:06 内核记录 `tun0` 在传 TCP。13:44:49 `DnsManager` 把 `1.1.1.1` 配到 `tun0`，netId 101。13:49:16 VPN 关掉，`tun0` 被删除。无线 adb 还在。
 
 ### 4. 关掉压缩 APEX（`12eb743`）
 
@@ -158,7 +162,11 @@ libprocessgroup: AddTidToCgroup failed to write '3519'; path=foreground; process
 
 实现笔记：
 
+2026-11-14。6.6.34 的检查在 `kernel/cgroup/cgroup-v1.c` 的 `__cgroup1_procs_write`。补丁是 `patches/kernel_6.6.34_cgroup_v1_cap_sys_nice.patch`：root、任务自己的 uid、suid 之外，持有 `CAP_SYS_NICE` 也可以写。`mtk-cci` 没带。新 `Image` SHA-256 `0c89417d14fe44582a644148dfed962b8e4c11da0186f0b1e8590f1bc836d7e2`，版本字符串仍是 `6.6.34-phase2`。对照新 `vmlinux` 里的 `__crc_*`，原有 12062 个导出 CRC 没有变，多出来的只有 `coreboot_driver_register` 和 `coreboot_driver_unregister`。`panfrost.ko`、`tun.ko`、`sch_ingress.ko` 的哈希没变。`vmlinuz.kpart` 14,090,240 字节，SHA-256 `55cb9c5309157a0b0ed12412f08000a8751842b2002e0a31b999d713a3c64668`。
+
 事件：
+
+2026-11-14 14:16，`10.0.0.110`。`/proc/version` 是 `6.6.34-phase2 #6 SMP PREEMPT Sat Nov 14 14:02:27 EST 2026`。`ro.build.date` 仍是 Sat Nov 14 13:21:38 EST 2026，`super` 没换。开机 3 分钟的 logcat 里 `AddTidToCgroup failed` 是 0 条。`system_server`（pid 3319）在 `cpuset:/foreground`，桌面（pid 3872）也在 `cpuset:/foreground`。`panfrost`、`tun`、`sch_ingress`、`ath10k_pci` 都已加载。`wlan0` 是 UP。`/dev/tun` 仍在。
 
 ### 电源提示按 RK3399 重写（`fc5ee05` 的 perfmgr，不是那份频率表）
 
@@ -170,7 +178,11 @@ cgroup 迁移修好之前，后台绑小核的提示不会生效。
 
 实现笔记：
 
+2026-11-14。`device.mk` 和 `BoardConfig.mk` 在 `options.mk` 之前设 `TARGET_POWER_HAL := perfmgr-lineage`。公共 makefile 还会装名为 `powerhint.json` 的模块，那个名字已经是 Kukui 的表，`mainline_common.mk` 在 `device.mk` 里的过滤之后才把它加回来，两份文件不能占同一个安装路径。Gru 的表拷成 `/vendor/etc/powerhint-gru.json` 普通文件。`init.gru.rc` 在 `early-init` 写 `vendor.powerhal.config=powerhint-gru.json`，电源 HAL 在 `late-fs` 才启动，读的是这个名字。Kukui 那份文件仍会留在 `/vendor/etc/powerhint.json`，HAL 不读它。调速器仍是 `schedutil`，不改 `scaling_governor`，也不改最高频率。当前这台的表：小核 policy0（CPU 0–3）600000–1512000，大核 policy4（CPU 4–5）816000–2016000，GPU `ff9a0000.gpu` 200000000–800000000。默认索引是空闲最低值，`ResetOnInit` 为真，提示结束会写回去。`INTERACTION` 把小核最低抬到 1200000、大核 1608000、GPU 500000000，时长 0，用框架给的时长。`LAUNCH` 维持 3000 ms，小核 1512000、大核 2016000、GPU 800000000。`CAMERA_STREAMING_MID` 和 `CAMERA_STREAMING_HIGH` 把小核最低抬到 1200000、大核 1800000、GPU 600000000，直到模式结束。后台和 system-background 的 cpuset 写成 `0-3`，`AllowFailure` 为真。前台和 top-app 仍是 `0-5`。同一条 adb 上先写过再恢复：小核 1200000 回到 600000，大核 1608000 回到 816000，GPU 500000000 回到 200000000，background cpuset `0-3` 回到 `0-5`。GPU 节点已经是 `sysfs_gpu`，libperfmgr 的策略已经允许电源 HAL 写它和 CPU sysfs、cgroup。内存控制器的频率没有写进这份表。`super.img` 1,285,489,044 字节，SHA-256 `dfe965c36f1cd8f90317303f51ac40dd694effcba463be03d2ae1a9da9baaa1e`。`ro.build.date` 是 Sat Nov 14 14:31:17 EST 2026。已写入。
+
 事件：
+
+2026-11-14 14:51，`10.0.0.110`，`ro.build.date` 是 Sat Nov 14 14:31:17 EST 2026。`vendor.power-hal-aidl` 从 `late-fs` 起一直在跑，pid 2729，域 `hal_power_default`。`vendor.powerhal.config` 是 `powerhint-gru.json`，这个文件是普通文件，2263 字节。`dumpsys` 里四个节点的当前值是小核 600000、大核 816000、GPU 200000000、后台 cpuset `0-3`。`schedutil` 没变。`setBoost(INTERACTION, 1500)` 期间是 1200000、1608000、500000000，两秒后回到 600000、816000、200000000。`setMode(LAUNCH)` 期间是 1512000、2016000、800000000，关掉后回到同样的空闲值。`setMode(CAMERA_STREAMING_HIGH)` 期间是 1200000、1800000、600000000，关掉后也回到空闲值。background 里有 553 个任务，其中一个的 `Cpus_allowed_list` 是 `0-3`。system-background 有 48 个任务，其中一个也是 `0-3`。foreground 里抽到的任务是 `0-5`。top-app 的掩码仍是 `0-5`。
 
 ### 壁纸最大缩放改成 1.0（`fc5ee05`）
 
@@ -200,7 +212,13 @@ cgroup 迁移修好之前，后台绑小核的提示不会生效。
 
 实现笔记：
 
+2026-11-14。运行内核的 `/proc/config.gz`：`CONFIG_NETFILTER_XT_TARGET_TCPMSS=y`，`CONFIG_NETFILTER_XT_TARGET_NFLOG=y`，`CONFIG_NET_CLS_BPF=y`，`CONFIG_NET_ACT_BPF=y`，`CONFIG_NET_SCH_INGRESS=m`。前四个已经在 11 月 5 日的内核镜像里。`iptables -t mangle -A OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --set-mss 1400` 和随后的 `-D` 都返回 0。`sch_ingress.ko` 用同一棵 6.6.34 树编，vermagic 与 `tun.ko` 相同，SHA-256 `a4e38bc14e1343691304388f97ee89e5d2153e66871404b1bad463c8345b123b`。`insmod` 之后 `tc qdisc add dev lo ingress` 能看到 `qdisc ingress`，随后删掉。`modprobe sch_ingress` 仍然失败，它去扫 `/lib/modules`，这个根文件系统没有这个目录。所以和 `tun.ko` 一样放进 `/vendor/lib`，由 `init.gru.rc` 提前加载。qdisc 已经注册时，内核找得到它，不会再调 `modprobe`。主线上没有 `xt_quota2`。和 `tun` 进同一份 `super`。
+
 事件：
+
+2026-11-14 13:50，同一台、同一份 `super`。`/vendor/lib/sch_ingress.ko` 的 SHA-256 与上面一致。`wlan0` 上已经挂着 `qdisc clsact`，模块引用计数是 1。开机 13:38 `/sys/fs/bpf/tethering` 里就钉着 `map_offload_tether_stats_map` 以及上下行的 `schedcls` 程序，`/sys/fs/bpf/netd_shared` 里有 `prog_netd_schedact_ingress_account`。临时链上 `NFLOG` 和 `TCPMSS --set-mss 1400` 都能加上再删掉。没有接客户端去数共享流量。
+
+这台没有基带。ath10k 的接口组合里，AP 和 station 同时存在的一组要求 `#channels <= 1`。设置里的热点用的是同一块网卡，打开会停掉正在用的 Wi-Fi。没有为了这项去打开热点。USB 或蓝牙共享仍可以用 Wi-Fi 当上游，这次没测。
 
 ### 序列号从 VPD 读出来（`7f6d160` 的设备树部分）
 
@@ -208,13 +226,23 @@ cgroup 迁移修好之前，后台绑小核的提示不会生效。
 
 实现笔记：
 
+2026-11-14。6.6 上 `/firmware` 没有 `#address-cells`，子节点的 `reg` 仍然按根节点的 2/2 解析出来了。平台设备是 `f7eda000.coreboot`。`System RAM` 收到 `f7dfffff`，PCIe 从 `f8000000` 开始，这 2 MB 的空隙里没有别的映射。表头签名是 `LBIO`，`header_bytes` 24，`table_bytes` 876，一共 900 字节，和 `reg` 的第一段一样大。VPD 在 `0xf7ffe940`，magic `0x43524f53`，只读 275 字节，可写 348 字节，结尾 `0xf7ffebbf`，还在 PCIe 窗口下面。没有改设备树的 cell。`CONFIG_GOOGLE_FIRMWARE`、`CONFIG_GOOGLE_COREBOOT_TABLE`、`CONFIG_GOOGLE_VPD` 编进内核。`CBMEM`、memconsole、coreboot framebuffer 没开。当前这次启动上用模块加载过，`/sys/firmware/vpd/ro/serial_number` 是 `NXH0BAA0018300CD207600`。`board-id` 是 5，`sku-id` 是 7。`scripts/gru-ids.sh` 在属性还空的时候写 `ro.serialno`。这次启动上手动跑过，两个属性变成 `NXH0BAA0018300CD207600` 和 `rev5 sku7`。那次是 root 直接 `setprop`。脚本在随后的 `super` 里，不在这份 `kpart` 里。
+
+2026-11-14。脚本改成只写 `ro.serialno`，不再调用 `getprop`。`ro.boot.hardware.revision` 是 `exported_default_prop`，策略只允许 `init` 和 `vendor_init` 设置。`serialno_prop` 的文件读取也只允许 `adbd`、`shell`、`system_server`、`vendor_init` 等少数域。`set_prop` 宏会带上这次读取，所以只留了属性套接字和 `property_service set`。`setprop` 对还没写过的 `ro.*` 可以成功一次。服务改成直接执行 `/vendor/bin/gru-ids.sh`，域是 `gru_ids`。`genfscon` 只标 `/sys/firmware/vpd/ro/serial_number` 为 `vendor_sysfs_vpd_serial`，VPD 里其余文件仍是普通 `sysfs`。`file_contexts` 把脚本标成 `gru_ids_exec`。之前那次手动 `setprop` 是 root，重启后没有留下来。和电源提示进同一份 `super`，哈希见上一节。已写入。
+
 事件：
+
+2026-11-14 14:16，同一台、同一份内核。`f7eda000.coreboot` 绑在 `coreboot_table` 上。root 读 `/sys/firmware/vpd/ro/serial_number` 是 `NXH0BAA0018300CD207600`。普通 shell 读这个节点会被 SELinux 拒绝。`ro.serialno` 和 `ro.boot.hardware.revision` 仍是空的，`gru-ids.sh` 还没进当前的 `super`。
+
+2026-11-14 14:51，同一台、上面那份 `super`。`gru-ids` 在 14:48:15 启动，pid 2718，0.082 秒后以状态 0 退出。`ro.serialno` 是 `NXH0BAA0018300CD207600`。`ro.boot.hardware.revision` 仍是空的。`serial_number` 的标签是 `vendor_sysfs_vpd_serial`，VPD 里其余文件仍是 `sysfs`。shell 读序列号和其余 VPD 文件都被拒绝。没有 `gru_ids` 的拒绝记录。
 
 ### H.264 同时两路（`bcc64e1` 里的 XML）
 
 `media_codecs_c2_cros.xml` 把 H.264 的 `concurrent-instances` 从 1 改成 2。Kukui 测过两个软件解码器可以同时跑。Gru 的解码器是 rkvdec，一路 720p60 的 VP9 刚修过 `last_picture`。两路要等单路稳定之后再改，并且只改实例数，不改输出格式。同一笔提交里把 MT8183 OVL 最小帧缓冲从 64 改成状态栏宽度，那是另一块显示控制器，不要带。
 
 实现笔记：
+
+2026-11-14。`device/google/gru/etc/media_codecs_c2.xml` 里 `c2.v4l2.avc.decoder`、`c2.v4l2.vp8.decoder`、`c2.v4l2.vp9.decoder` 的 `concurrent-instances` 已经是 8。Kukui 那一笔是从 1 改成 2。这次没有改这份 XML，`last_picture` 也没动。两路解码还没跑。
 
 事件：
 
@@ -256,6 +284,10 @@ cgroup 迁移修好之前，后台绑小核的提示不会生效。
 11. 关掉压缩 APEX。跟某次本来就要重做 userdata 或打包分发镜像一起做。看第一次开机时间和 `super` 大小。
 12. `boot-after-ota=speed-profile`。有 OTA 之后再测。属性可以夹进别的 `super`，不单独写卡。
 
+2026-11-14 这一批把第 5 项和第 8 项放进同一份 `super`，SHA-256 `fb66d2e04ebce9a9acfba36f92b6a0e5d376a9732057db927ca714b08f9faf4d`。第 10 项的实例数已经是 8，没有改 XML。第 6、7、9、11、12 项这次没做。已写入卡。VPN 见第 3 节的事件，热点模块见对应事件。
+
+2026-11-14 下一批是内核分区：第 6 项的 cgroup，和第 9 项的 `coreboot_table` / VPD。`vmlinuz.kpart` SHA-256 `55cb9c5309157a0b0ed12412f08000a8751842b2002e0a31b999d713a3c64668`。已写入。cgroup 迁移和 VPD 见上面的事件。第 7 项的 `powerhint` 和 `gru-ids.sh` 在随后的 `super`：1,285,489,044 字节，SHA-256 `dfe965c36f1cd8f90317303f51ac40dd694effcba463be03d2ae1a9da9baaa1e`，`ro.build.date` 是 Sat Nov 14 14:31:17 EST 2026。内核分区没有换。已写入。频率、后台 cpuset 和 `ro.serialno` 见上面两节的事件。
+
 显示这条线量到这里。壁纸的 `ROT_90` 仍进 GPU，状态栏和任务栏在画面更新时是平面，帧缓冲是唯一的 AFBC。桌面夹在壁纸和这两条栏中间，客户范围按 z 序连在一起，大 VOP 又只有三个非 cursor 窗口，所以桌面留在 GPU 里。空闲一秒后 `FlatteningController` 仍会把整帧收成一块帧缓冲。壁纸缩放去不掉这个旋转。Rockchip 闭源合成器那条 RGA 旋转路径不接进这棵主线 `drm_hwcomposer`。
 
 2026-11-14 10:28，同一台、壁纸缩放已经是 1.0。应用抽屉划出时用 `atrace gfx` 按线程对过。启动器 UI 线程的 `traversal` 中位数 19 ms，`measure` 和 `layout` 都不到 0.2 ms，`Record View#draw()` 中位数 0.4 ms。真正占时间的是 UI 线程等 RenderThread 的 `postAndWait`（中位数 7 ms），以及 RenderThread 画整块 2048×1536 桌面缓冲（中位数 9 ms）。12 帧里 RenderThread 还在 `waitForBufferRelease` 上等了中位数 10 ms。SurfaceFlinger 的 `drawLayersInternal` 中位数 1.7 ms，`present` 中位数 4 ms。合成器后台的 `AsyncWaitForBuffersSwap` 中位数 14 ms，不在这次 `present` 的调用栈里。抽屉划出时桌面帧开始间隔中位数 22 ms，上屏的 `present` 间隔中位数 33 ms。第 5 项往后的 `tun`、cgroup、`powerhint` 不动这条路径。
@@ -264,4 +296,30 @@ cgroup 迁移修好之前，后台绑小核的提示不会生效。
 
 2026-11-14 10:58，`10.0.0.110`，`ro.build.date` 是 Sat Nov 14 10:43:03 EST 2026，屏幕是 `ROTATION_0`。手指拖着应用抽屉走的 786 ms 里，`doFrame` 和 `present` 间隔中位数都是 16.7 ms，90 分位 17.0 ms。这段 `waitForBufferRelease` 没有出现。`LauncherAllAppsContainerView` 的层只画了 1 次，整块 1536×2048 的 `Drawing` 中位数 3.9 ms。手指松开、抽屉自己弹开的大约 300 ms 里，这一层又画了 13 次，`Drawing` 中位数 11 ms，`present` 90 分位 33.6 ms。弹回的短滑也有 10 次重画这一层，`present` 90 分位 33 ms。一直滑到底再松开、让它收回去，`present` 仍是 16.7 ms。松手弹开时 `onDragEnd` 对 `ALL_APPS` 调用 `addSpringFromFlingUpdateListener`，里面 `absorbSwipeUpVelocity` 让 `EdgeEffect` 吸收速度并 `invalidate()` 整块 `SpringRelativeLayout`。拖动过程只改位移，不走这一段。
 
-2026-11-14。`packages/apps/Launcher3/src/com/android/launcher3/views/SpringRelativeLayout.java` 里，`absorbSwipeUpVelocity`、`absorbPullDeltaDistance` 和 `onRelease` 改为结束已经在画的光效，不再 `onAbsorb` / `onPull`。抽屉的位移动画不动。补丁是 `patches/packages_apps_Launcher3_all_apps_edge_glow.patch`。`super.img` 1,285,599,636 字节，SHA-256 `a55e94a01047228f897068ba1c9a2bdaf30c37ac806b24e0350ddbd18f4a1511`，`ro.build.date` 是 Sat Nov 14 11:07:20 EST 2026。2026-11-14 11:15 已传到 `10.0.0.123:/home/user/phase3/super.img`，上一张留成 `super.img.9c5e3512`。`kernel.kpart` 仍是 11 月 5 日那份。`doas -n` 要密码，写卡没跑。弹回那条路径这次没有单独改，写入后再量。
+2026-11-14。`packages/apps/Launcher3/src/com/android/launcher3/views/SpringRelativeLayout.java` 里，`absorbSwipeUpVelocity`、`absorbPullDeltaDistance` 和 `onRelease` 改为结束已经在画的光效，不再 `onAbsorb` / `onPull`。抽屉的位移动画不动。补丁是 `patches/packages_apps_Launcher3_all_apps_edge_glow.patch`，只写在 Gru 的 `patches/apply-patches.sh` 里。Kukui 的 `apply-patches.sh` 不读 Gru 的补丁。类里再用 `Build.DEVICE` 等于 `gru` 才走这条路径，别的设备仍是原来的 `onAbsorb` / `onPull`。`super.img` 1,285,599,636 字节，SHA-256 `a55e94a01047228f897068ba1c9a2bdaf30c37ac806b24e0350ddbd18f4a1511`，`ro.build.date` 是 Sat Nov 14 11:07:20 EST 2026。已写入卡。这份镜像里的判断还没有 `Build.DEVICE` 这一层，机器本身是 gru。
+
+2026-11-14 11:22，`10.0.0.110`，`ro.build.date` 对得上，屏幕是 `ROTATION_90`，2048×1536。从停靠栏上方划出抽屉，松手后的 500 ms 里启动器 `Choreographer#doFrame` 间隔中位数 16.7 ms，90 分位 16.9 ms。`traversal` 中位数 11.9 ms，整块 `Drawing` 中位数 3.6 ms，`waitForBufferRelease` 中位数 1.2 ms。没有再出现 `LauncherAllAppsContainerView` 的 `drawLayer`。短滑弹回后的 450 ms 同样是 16.7 ms，90 分位 17.1 ms，`traversal` 中位数 11.5 ms，也没有重画这一层。一直滑到底的收回，拖动过程 `doFrame` 间隔中位数 16.7 ms。桌面翻页的拖动和松手都在 16.6 到 16.9 ms。
+
+同一份轨迹里，抽屉已经打开之后滑动应用列表，`AllAppsRecyclerView` 1394×1365 在拖动和松手后的惯性里每帧都重画。松手后 `doFrame` 90 分位 40.3 ms，`traversal` 中位数 20.0 ms，`waitForBufferRelease` 中位数 20.9 ms。这不是抽屉位移动画那条光效。列表顶边的 `EdgeEffectProxy` 仍会 `invalidate()` 整块 `SpringRelativeLayout`，Gru 上改为不再转发。应用列表自己的整层重画还没改。这份带 `Build.DEVICE` 判断的 `super.img` 1,285,599,636 字节，SHA-256 `6b33031c0b8e0bd4d7935431ecbdeb871069515687ab8e01c21fa655bf2ff250`，`ro.build.date` 是 Sat Nov 14 11:34:51 EST 2026。2026-11-14 11:42 已传到 `10.0.0.123:/home/user/phase3/super.img`，上一张留成 `super.img.a55e94a0`。`kernel.kpart` 仍是 11 月 5 日那份。已写入卡。
+
+2026-11-14 12:05，`10.0.0.110`，`ro.build.date` 是 Sat Nov 14 11:34:51 EST 2026，`ro.product.device` 是 gru，屏幕是 `ROTATION_0`，1536×2048。从 y=1300 划到 y=450 打开抽屉，松手后的 450 ms 里 `doFrame` 间隔中位数 16.7 ms，90 分位 16.9 ms。`traversal` 中位数 11.5 ms，`Drawing` 中位数 5.6 ms，`waitForBufferRelease` 没有出现，也没有 `LauncherAllAppsContainerView` 的 `drawLayer`。拖动开始有一帧 54.6 ms。
+
+接着在同一张卡上批量看别的滑动，没有再写镜像。`animator_duration_scale` 设成 0 时，`EdgeEffect` 走 `TYPE_NONE`，测完已删掉这个设置，恢复成默认。抽屉刚打开后滑应用列表，有一次 `AllAppsRecyclerView` 1232×1877 重画了 20 次，拖动 `doFrame` 90 分位 42.9 ms，松手后 `traversal` 中位数 29.8 ms。动画关掉后再滑，这一层没有出现。隔 1 秒再滑列表中间，动画开着也没有这一层。再做一次刚打开就滑，动画开和关都没有这一层。设置列表滑到底，动画开着时松手 `doFrame` 中位数 16.6 ms，90 分位 19.6 ms，没有整块列表层。所以没有把整个系统的边缘特效都关掉。应用列表拖动里仍有大约 33 ms 的帧和 21 ms 的 `waitForBufferRelease`，和这次光效不是同一条路径。
+
+2026-11-14 12:16。测试里把 `animator_duration_scale` 设成 0。`settings delete` 之后设置项没了，但 `WindowManagerService.getAnimatorDurationScaleSetting()` 在读不到这项时用当前内存里的倍率当默认值，所以内存里一直停在 0，窗口动画和属性动画都不跑了。这不是要保留的改动。12:17 把这项写回 1。`window_animation_scale` 和 `transition_animation_scale` 一直是 1.0。写回之后，从图标打开应用的轨迹里能看到 `animation` 和 `notifyAnimEnd`。
+
+2026-11-14 12:18，`10.0.0.110`，竖屏，点主屏上的 PiliPlus。启动器 `doFrame` 间隔 44 帧里 28 帧不超过 18 ms，90 分位 45.8 ms，最长 81.9 ms。`present` 间隔中位数 17.3 ms，90 分位 35.0 ms。名叫 `animation` 的片段中位数 2.8 ms。慢的是启动器 `traversal` 最长 48.6 ms，任务栏 `draw-VRI` 有 3 帧到 30 ms，启动画面那一帧 `traversal` 99.7 ms，应用自己的第一帧 71.0 ms。`Workspace` 的层只画了 1 次。
+
+同一台，从 y=2024 按住向上滑，进了 `overview_panel`。松手后的 700 ms 里启动器 `doFrame` 中位数 16.6 ms，90 分位 32.7 ms，最长 75.0 ms。中间有一帧 `traversal` 63.5 ms，同时任务栏 `draw-VRI` 53.0 ms，整块 1536×2048 的 `Drawing` 50.2 ms。这一帧旁边的整屏 `Drawing` 是 13 到 14 ms。没有连续重画最近任务的层。
+
+2026-11-14 12:25 起，掉帧最重的是在最近任务里点一张卡片进应用，从图标打开应用是同一类卡顿。点 PiliPlus 那张卡片（`[789,238][1305,926]`，点在 1047,582）。启动器 `doFrame` 48 个间隔，中位数 16.6 ms，90 分位 43.7 ms，最长 58.2 ms。`present` 间隔 28 个，中位数 20.5 ms，90 分位 33.9 ms。`animation` 片段中位数 0.8 ms。整屏 `Drawing` 21 次，中位数 9.1 ms，其中 20 次是 1536×2048。没有 `drawLayer`。从点击后 0.32 s 起，RenderThread 的 `waitForBufferRelease` 连续是 20.0、25.6、15.5、25.4、20.1、25.0、27.1、24.5 ms。GPU 在这段已经是 800 MHz。
+
+图标打开的前 350 ms 是 `CONTENT_SCALE_DURATION`。这段 `dequeueBuffer` 经常不到 0.2 ms，缓冲是空的，但整屏 `Drawing` 有 13 到 16 ms，`composite` 间隔多在 33 ms。`Workspace` 的 `drawLayer` 只在大约 0.38 s 出现一次，1536×2048。层画完之后的 `Drawing` 降到 1.5 到 4.8 ms，`composite` 回到 16.7 ms。层出现之前，窗口每一帧都在重放桌面图标的显示列表。
+
+这两段的动画数值都不贵。贵的是启动器每一帧都重画整块 1536×2048，而这块缓冲又和旋转过的壁纸一起被 SurfaceFlinger 用 GPU 合成。卡片放大的后半段，`present` 自己要 13 到 16 ms，里面 `HwcPresentDisplay` 大约 10 ms，有一帧 `drawLayersInternal` 是 8.2 ms。启动器的 `doFrame` 仍多在 16.7 ms，画完的缓冲赶不上下一个 vsync，上屏就落在 33 ms。缓冲队列是在这之后才被填满，所以后面才出现 20 到 27 ms 的 `waitForBufferRelease`。
+
+在线把预旋转多留的缓冲从 2 块改成 3 块，再改成 5 块，只换了 `libhwui.so` 并重启了 zygote，没有写卡。3 块时卡片放大在大约 0.29 到 0.34 s 有一段 16.7 ms，随后仍是 33 ms，`waitForBufferRelease` 从 0.42 s 起仍是 21 到 27 ms。5 块时卡片的 `composite` 30 帧里 17 帧在 33 ms 左右，整屏 `Drawing` 中位数 10.3 ms。图标打开在缓冲还空着的时候就已经是 33 ms。多留的缓冲盖不住这次合成超时。源码和补丁已改回多留 2 块，和现在卡上的 11:34 镜像一致。
+
+图标这边试过在缩放开始前 `buildLayer()`。层仍在大约 0.46 s 才出现，有一帧 `panfrost_bo_munmap` 花了 16 ms，整屏 `Drawing` 到了 36 ms。没有留下。卡片这边试过只做 `SCALE_X` / `SCALE_Y` 的硬件层，并去掉缩略图 splash。这次概览没有走进 `zoomInTaskView`，轨迹里没有 `drawLayer`。去掉 splash 之后整屏 `Drawing` 中位数仍是 8.9 ms，`composite` 30 帧里 16 帧在 33 ms。这两处启动器改动都已从源码和 `apply-patches.sh` 里撤掉。
+
+试验用的 bind mount 已卸掉，zygote 已重启。`/system/lib64/libhwui.so` 回到闪存上的 inode，`ro.build.date` 仍是 Sat Nov 14 11:34:51 EST 2026，`animator_duration_scale` 是 1。没有新的 `super`。

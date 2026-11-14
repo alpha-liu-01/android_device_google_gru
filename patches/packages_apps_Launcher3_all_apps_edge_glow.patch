@@ -1,8 +1,34 @@
 diff --git a/src/com/android/launcher3/views/SpringRelativeLayout.java b/src/com/android/launcher3/views/SpringRelativeLayout.java
-index a13152e..c035be1 100644
+index a13152e..90bf935 100644
 --- a/src/com/android/launcher3/views/SpringRelativeLayout.java
 +++ b/src/com/android/launcher3/views/SpringRelativeLayout.java
-@@ -76,21 +76,39 @@ public class SpringRelativeLayout extends RelativeLayout {
+@@ -17,6 +17,7 @@ package com.android.launcher3.views;
+ 
+ import android.content.Context;
+ import android.graphics.Canvas;
++import android.os.Build;
+ import android.util.AttributeSet;
+ import android.widget.EdgeEffect;
+ import android.widget.RelativeLayout;
+@@ -33,6 +34,9 @@ public class SpringRelativeLayout extends RelativeLayout {
+     // fixed edge at the time force is applied
+     private final EdgeEffect mEdgeGlowTop;
+     private final EdgeEffect mEdgeGlowBottom;
++    // This launcher tree is shared with other devices. The full-screen glow
++    // repaint only misses frames on Gru, so other devices keep the stock glow.
++    private final boolean mSkipFullScreenEdgeGlow;
+ 
+     public SpringRelativeLayout(Context context) {
+         this(context, null);
+@@ -46,6 +50,7 @@ public class SpringRelativeLayout extends RelativeLayout {
+         super(context, attrs, defStyleAttr);
+         mEdgeGlowTop = new EdgeEffect(context, attrs);
+         mEdgeGlowBottom = new EdgeEffect(context, attrs);
++        mSkipFullScreenEdgeGlow = "gru".equals(Build.DEVICE);
+         setWillNotDraw(false);
+     }
+ 
+@@ -76,21 +81,53 @@ public class SpringRelativeLayout extends RelativeLayout {
      }
  
  
@@ -26,6 +52,11 @@ index a13152e..c035be1 100644
      protected void absorbSwipeUpVelocity(int velocity) {
 -        mEdgeGlowBottom.onAbsorb(velocity);
 -        invalidate();
++        if (!mSkipFullScreenEdgeGlow) {
++            mEdgeGlowBottom.onAbsorb(velocity);
++            invalidate();
++            return;
++        }
 +        if (velocity == 0 && mEdgeGlowBottom.isFinished()) {
 +            return;
 +        }
@@ -35,6 +66,11 @@ index a13152e..c035be1 100644
      protected void absorbPullDeltaDistance(float deltaDistance, float displacement) {
 -        mEdgeGlowBottom.onPull(deltaDistance, displacement);
 -        invalidate();
++        if (!mSkipFullScreenEdgeGlow) {
++            mEdgeGlowBottom.onPull(deltaDistance, displacement);
++            invalidate();
++            return;
++        }
 +        if (deltaDistance == 0f && displacement == 0f && mEdgeGlowBottom.isFinished()) {
 +            return;
 +        }
@@ -43,7 +79,48 @@ index a13152e..c035be1 100644
  
      public void onRelease() {
 -        mEdgeGlowBottom.onRelease();
++        if (!mSkipFullScreenEdgeGlow) {
++            mEdgeGlowBottom.onRelease();
++            return;
++        }
 +        endEdgeGlow();
      }
  
      public EdgeEffectFactory createEdgeEffectFactory() {
+@@ -130,24 +167,36 @@ public class SpringRelativeLayout extends RelativeLayout {
+ 
+         @Override
+         public void onAbsorb(int velocity) {
++            if (mSkipFullScreenEdgeGlow) {
++                return;
++            }
+             mParent.onAbsorb(velocity);
+             invalidateParentScrollEffect();
+         }
+ 
+         @Override
+         public void onPull(float deltaDistance) {
++            if (mSkipFullScreenEdgeGlow) {
++                return;
++            }
+             mParent.onPull(deltaDistance);
+             invalidateParentScrollEffect();
+         }
+ 
+         @Override
+         public void onPull(float deltaDistance, float displacement) {
++            if (mSkipFullScreenEdgeGlow) {
++                return;
++            }
+             mParent.onPull(deltaDistance, displacement);
+             invalidateParentScrollEffect();
+         }
+ 
+         @Override
+         public void onRelease() {
++            if (mSkipFullScreenEdgeGlow) {
++                return;
++            }
+             mParent.onRelease();
+             invalidateParentScrollEffect();
+         }

@@ -1,0 +1,53 @@
+{
+  "Nodes": [
+    {
+      "Name": "CPULittleClusterMinFreq",
+      "Paths": ["/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq"],
+      "Values": ["1512000", "1200000", "600000"],
+      "DefaultIndex": 2,
+      "ResetOnInit": true
+    },
+    {
+      "Name": "CPUBigClusterMinFreq",
+      "Paths": ["/sys/devices/system/cpu/cpufreq/policy4/scaling_min_freq"],
+      "Values": ["2016000", "1800000", "1608000", "816000"],
+      "DefaultIndex": 3,
+      "ResetOnInit": true
+    },
+    {
+      "Name": "GPUMinFreq",
+      "Paths": ["/sys/class/devfreq/ff9a0000.gpu/min_freq"],
+      "Values": ["800000000", "600000000", "500000000", "200000000"],
+      "DefaultIndex": 3,
+      "ResetOnInit": true
+    },
+    {
+      "Name": "BackgroundCpus",
+      "Paths": [
+        "/dev/cpuset/background/cpus",
+        "/dev/cpuset/system-background/cpus"
+      ],
+      "Values": ["0-3"],
+      "DefaultIndex": 0,
+      "ResetOnInit": true,
+      "AllowFailure": true
+    }
+  ],
+  "Actions": [
+    { "PowerHint": "INTERACTION", "Node": "CPULittleClusterMinFreq", "Duration": 0, "Value": "1200000" },
+    { "PowerHint": "INTERACTION", "Node": "CPUBigClusterMinFreq", "Duration": 0, "Value": "1608000" },
+    { "PowerHint": "INTERACTION", "Node": "GPUMinFreq", "Duration": 0, "Value": "500000000" },
+
+    { "PowerHint": "LAUNCH", "Node": "CPULittleClusterMinFreq", "Duration": 3000, "Value": "1512000" },
+    { "PowerHint": "LAUNCH", "Node": "CPUBigClusterMinFreq", "Duration": 3000, "Value": "2016000" },
+    { "PowerHint": "LAUNCH", "Node": "GPUMinFreq", "Duration": 3000, "Value": "800000000" },
+
+    { "PowerHint": "CAMERA_STREAMING_MID", "Node": "CPULittleClusterMinFreq", "Duration": 0, "Value": "1200000" },
+    { "PowerHint": "CAMERA_STREAMING_MID", "Node": "CPUBigClusterMinFreq", "Duration": 0, "Value": "1800000" },
+    { "PowerHint": "CAMERA_STREAMING_MID", "Node": "GPUMinFreq", "Duration": 0, "Value": "600000000" },
+
+    { "PowerHint": "CAMERA_STREAMING_HIGH", "Node": "CPULittleClusterMinFreq", "Duration": 0, "Value": "1200000" },
+    { "PowerHint": "CAMERA_STREAMING_HIGH", "Node": "CPUBigClusterMinFreq", "Duration": 0, "Value": "1800000" },
+    { "PowerHint": "CAMERA_STREAMING_HIGH", "Node": "GPUMinFreq", "Duration": 0, "Value": "600000000" }
+  ]
+}

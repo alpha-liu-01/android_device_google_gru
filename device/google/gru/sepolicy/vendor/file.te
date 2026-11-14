@@ -1,1 +1,2 @@
 type sysfs_v4l, fs_type, sysfs_type;
+type vendor_sysfs_vpd_serial, fs_type, sysfs_type;

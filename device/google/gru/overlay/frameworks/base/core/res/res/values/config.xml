@@ -93,4 +93,10 @@
     <!-- DP jack is an input switch (SW_LINEOUT|SW_VIDEOOUT), not an extcon. -->
     <bool name="config_useDevInputEventForAudioJack">true</bool>
 
+    <!-- Wallpaper zoom is 1.1 by default. The extra scale is applied on the
+         GPU every time that layer is redrawn. This does not remove the
+         wallpaper's own 270 degree rotation, so the layer still cannot be
+         a device plane. -->
+    <item name="config_wallpaperMaxScale" format="float" type="dimen">1.0</item>
+
 </resources>

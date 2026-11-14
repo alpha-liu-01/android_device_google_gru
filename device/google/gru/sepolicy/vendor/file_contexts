@@ -14,4 +14,5 @@
 /dev/v4l-subdev[0-9]*         u:object_r:video_device:s0
 
 /vendor/bin/expand_userdata\.sh    u:object_r:gru_expand_exec:s0
+/vendor/bin/gru-ids\.sh            u:object_r:gru_ids_exec:s0
 /vendor/bin/blkpg_resize           u:object_r:gru_expand_exec:s0

@@ -1,0 +1,125 @@
+diff --git a/backend/Backend.cpp b/backend/Backend.cpp
+index 7d93476..a571134 100644
+--- a/backend/Backend.cpp
++++ b/backend/Backend.cpp
+@@ -22,7 +22,9 @@
+ #include "BackendManager.h"
+ #include "bufferinfo/BufferInfoGetter.h"
+ #include "drm/DrmHwc.h"
++#include "drm/DrmPlane.h"
+ #include "hwc/HwcDisplay.h"
++#include "utils/properties.h"
+ 
+ namespace android {
+ 
+@@ -150,10 +152,30 @@ std::tuple<size_t, size_t> Backend::GetClientLayers(
+ }
+ 
+ bool Backend::IsClientLayer(const HwcDisplay* display, const HwcLayer* layer) {
+-  return !HardwareSupportsLayerType(layer->GetSfType()) ||
+-         !layer->IsLayerUsableAsDevice() || display->CtmByGpu() ||
+-         (layer->GetLayerData().pi.RequireScalingOrPhasing() &&
+-          display->ForcedScalingWithGpu());
++  if (!HardwareSupportsLayerType(layer->GetSfType()) ||
++      !layer->IsLayerUsableAsDevice() || display->CtmByGpu() ||
++      (layer->GetLayerData().pi.RequireScalingOrPhasing() &&
++       display->ForcedScalingWithGpu()))
++    return true;
++
++  /* VOP planes have no 90-degree rotation. A layer that none of them can
++   * scan out has to be client. Leaving it in the device list makes
++   * CreateDrmKmsPlan fail and the backend then flattens every layer.
++   * The property stays off so a newly installed binary matches the
++   * previous compositor until the check is requested. */
++  if (!Properties::ClientUnsupportedTransform())
++    return false;
++
++  const auto transform = layer->GetLayerData().pi.transform;
++  const auto planes = display->GetPipe().GetUsablePlanes().first;
++  if (planes.empty())
++    return false;
++  for (const auto& plane : planes) {
++    if (plane && plane->Get() &&
++        plane->Get()->SupportsLayerTransform(transform))
++      return false;
++  }
++  return true;
+ }
+ 
+ bool Backend::HardwareSupportsLayerType(CompositionType comp_type) {
+diff --git a/drm/DrmPlane.cpp b/drm/DrmPlane.cpp
+index 57ec5cf..e732217 100644
+--- a/drm/DrmPlane.cpp
++++ b/drm/DrmPlane.cpp
+@@ -230,6 +230,11 @@ bool DrmPlane::IsValidForLayer(const LayerData *layer) {
+   return true;
+ }
+ 
++bool DrmPlane::SupportsLayerTransform(LayerTransform transform) const {
++  uint64_t drm_rotation = ToDrmRotation(transform);
++  return (drm_rotation & transform_enum_mask_) == drm_rotation;
++}
++
+ bool DrmPlane::IsFormatSupported(uint32_t format) const {
+   return std::find(std::begin(formats_), std::end(formats_), format) !=
+          std::end(formats_);
+diff --git a/drm/DrmPlane.h b/drm/DrmPlane.h
+index 4ec424b..f3fbd78 100644
+--- a/drm/DrmPlane.h
++++ b/drm/DrmPlane.h
+@@ -46,6 +46,7 @@ class DrmPlane : public PipelineBindable<DrmPlane> {
+ 
+   bool IsCrtcSupported(const DrmCrtc &crtc) const;
+   bool IsValidForLayer(const LayerData *layer);
++  bool SupportsLayerTransform(LayerTransform transform) const;
+ 
+   auto GetType() const {
+     return type_;
+diff --git a/utils/properties.cpp b/utils/properties.cpp
+index 5a874c5..25975c6 100644
+--- a/utils/properties.cpp
++++ b/utils/properties.cpp
+@@ -108,6 +108,11 @@ auto Properties::ScaleWithGpu() -> bool {
+   return (property_get_bool("vendor.hwc.drm.scale_with_gpu", 0) != 0);
+ }
+ 
++auto Properties::ClientUnsupportedTransform() -> bool {
++  return (property_get_bool("vendor.hwc.drm.client_unsupported_transform", 0) !=
++          0);
++}
++
+ auto Properties::EnableVirtualDisplay() -> bool {
+   return (property_get_bool("vendor.hwc.drm.enable_virtual_display", 0) != 0);
+ }
+@@ -136,6 +141,10 @@ auto Properties::GetBackendOverride() -> std::string {
+   return {backend_override};
+ }
+ 
++auto Properties::PreferWideCrtc() -> bool {
++  return (property_get_bool("vendor.hwc.drm.prefer_wide_crtc", 1) != 0);
++}
++
+ auto Properties::GetDevicePath() -> std::string {
+   char path_pattern[PROPERTY_VALUE_MAX];
+   // Could be a valid path or it can have at the end of it the wildcard %
+diff --git a/utils/properties.h b/utils/properties.h
+index e127761..74ff56e 100644
+--- a/utils/properties.h
++++ b/utils/properties.h
+@@ -32,10 +32,16 @@ class Properties {
+   static auto InternalDisplayNames() -> std::string;
+   static auto UseOverlayPlanes() -> bool;
+   static auto ScaleWithGpu() -> bool;
++  /* A layer whose transform no plane can scan out is composed by the GPU.
++   * Off unless vendor.hwc.drm.client_unsupported_transform is true. */
++  static auto ClientUnsupportedTransform() -> bool;
+   static auto EnableVirtualDisplay() -> bool;
+   static auto GetCtmHandling() -> CtmHandling;
+   static auto GetBackendOverride() -> std::string;
+   static auto GetDevicePath() -> std::string;
++  /* RK3399's little VOP cannot scan AFBC. Prefer the CRTC with more planes
++   * (the big VOP) for the internal DSI panel. */
++  static auto PreferWideCrtc() -> bool;
+ };
+ 
+ }  // namespace android

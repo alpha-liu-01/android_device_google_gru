@@ -1,0 +1,363 @@
+diff --git a/libs/hwui/pipeline/skia/SkiaOpenGLPipeline.cpp b/libs/hwui/pipeline/skia/SkiaOpenGLPipeline.cpp
+index 0768f457972b..d3a5e9068277 100644
+--- a/libs/hwui/pipeline/skia/SkiaOpenGLPipeline.cpp
++++ b/libs/hwui/pipeline/skia/SkiaOpenGLPipeline.cpp
+@@ -49,6 +49,119 @@ namespace skiapipeline {
+ SkiaOpenGLPipeline::SkiaOpenGLPipeline(RenderThread& thread)
+         : SkiaGpuPipeline(thread), mEglManager(thread.eglManager()) {
+     thread.renderState().registerContextCallback(this);
++    mPreRotationEnabled = property_get_bool("debug.hwui.gl_prerotation", false);
++    updatePixelSnapMatrix(0, 0, 0);
++}
++
++static int32_t invertTransform(int32_t transform) {
++    switch (transform) {
++        case NATIVE_WINDOW_TRANSFORM_ROT_90:
++            return NATIVE_WINDOW_TRANSFORM_ROT_270;
++        case NATIVE_WINDOW_TRANSFORM_ROT_270:
++            return NATIVE_WINDOW_TRANSFORM_ROT_90;
++        default:
++            return transform;
++    }
++}
++
++void SkiaOpenGLPipeline::updatePixelSnapMatrix(int32_t width, int32_t height, int32_t transform) {
++    if (width == mSnapWidth && height == mSnapHeight && transform == mSnapTransform) {
++        return;
++    }
++    mSnapWidth = width;
++    mSnapHeight = height;
++    mSnapTransform = transform;
++    // Small (~1/16th) nudge to ensure that pixel-aligned non-AA'd draws fill the
++    // desired fragment. Applied in buffer space, as VulkanSurface does.
++    static const SkScalar kOffset = 0.063f;
++    SkMatrix preRotation = Frame::preTransformMatrix(width, height, transform);
++    SkMatrix invert;
++    if (transform == 0 || !preRotation.invert(&invert)) {
++        mPixelSnapMatrix = SkM44::Translate(kOffset, kOffset);
++        return;
++    }
++    mPixelSnapMatrix = SkM44::Translate(kOffset, kOffset)
++                               .postConcat(SkM44(preRotation))
++                               .preConcat(SkM44(invert));
++}
++
++// Puts the window back to consumer-sized, unrotated buffers.
++void SkiaOpenGLPipeline::resetPreRotation() {
++    if (mPreRotationEnabled && mNativeWindow) {
++        native_window_set_buffers_transform(mNativeWindow.get(), 0);
++        native_window_set_buffers_dimensions(mNativeWindow.get(), 0, 0);
++    }
++    mPreRotation = 0;
++    mPreRotationChanged = false;
++    mPreRotationBufferWidth = 0;
++    mPreRotationBufferHeight = 0;
++}
++
++void SkiaOpenGLPipeline::recreateEglSurface() {
++    mEglManager.destroySurface(mEglSurface);
++    mEglSurface = EGL_NO_SURFACE;
++    auto newSurface =
++            mEglManager.createSurface(mNativeWindow.get(), mColorMode, mSurfaceColorSpace);
++    LOG_ALWAYS_FATAL_IF(!newSurface, "GL pre-rotation: recreating the EGL surface failed");
++    mEglSurface = newSurface.unwrap();
++    const bool preserveBuffer = (mSwapBehavior != SwapBehavior::kSwap_discardBuffer);
++    mEglManager.setPreserveBuffer(mEglSurface, preserveBuffer);
++}
++
++// Follows the window's transform hint. For 90/270 the buffers are requested
++// with swapped dimensions; the window's logical size (what EGL_WIDTH and
++// EGL_HEIGHT report) stays the same, so the rest of HWUI keeps working in
++// window coordinates.
++void SkiaOpenGLPipeline::updatePreRotation() {
++    ANativeWindow* window = mNativeWindow.get();
++    int hint = 0;
++    if (window->query(window, NATIVE_WINDOW_TRANSFORM_HINT, &hint) != 0 ||
++        (hint != NATIVE_WINDOW_TRANSFORM_ROT_90 && hint != NATIVE_WINDOW_TRANSFORM_ROT_180 &&
++         hint != NATIVE_WINDOW_TRANSFORM_ROT_270)) {
++        hint = 0;
++    }
++
++    int32_t bufferWidth = 0;
++    int32_t bufferHeight = 0;
++    if (hint & NATIVE_WINDOW_TRANSFORM_ROT_90) {
++        int width = 0;
++        int height = 0;
++        if (window->query(window, NATIVE_WINDOW_DEFAULT_WIDTH, &width) != 0 ||
++            window->query(window, NATIVE_WINDOW_DEFAULT_HEIGHT, &height) != 0 || width <= 0 ||
++            height <= 0) {
++            // Without a known window size the buffers cannot be swapped.
++            hint = 0;
++        } else {
++            bufferWidth = height;
++            bufferHeight = width;
++        }
++    }
++
++    if (hint == mPreRotation && bufferWidth == mPreRotationBufferWidth &&
++        bufferHeight == mPreRotationBufferHeight) {
++        return;
++    }
++    if (hint != mPreRotation && mEglSurface != EGL_NO_SURFACE) {
++        // EGL may still hold a buffer dequeued in the old orientation (for
++        // example when the last frame was not swapped). Queued with the new
++        // transform, BLASTBufferQueue rejects it and the frame is lost.
++        // Recreating the surface cancels that buffer. The disconnect also
++        // resets the window's transform and dimensions, so they are set below.
++        recreateEglSurface();
++    }
++    if (native_window_set_buffers_transform(window, invertTransform(hint)) != 0 ||
++        native_window_set_buffers_dimensions(window, bufferWidth, bufferHeight) != 0) {
++        ALOGE("GL pre-rotation: setting transform %d / %dx%d failed, disabling", hint,
++              bufferWidth, bufferHeight);
++        resetPreRotation();
++        mPreRotationEnabled = false;
++        mPreRotationChanged = true;
++        return;
++    }
++    mPreRotationChanged = mPreRotationChanged || hint != mPreRotation;
++    mPreRotation = hint;
++    mPreRotationBufferWidth = bufferWidth;
++    mPreRotationBufferHeight = bufferHeight;
+ }
+ 
+ SkiaOpenGLPipeline::~SkiaOpenGLPipeline() {
+@@ -110,7 +223,17 @@ MakeCurrentResult SkiaOpenGLPipeline::makeCurrent() {
+ Frame SkiaOpenGLPipeline::getFrame() {
+     LOG_ALWAYS_FATAL_IF(mEglSurface == EGL_NO_SURFACE,
+                         "drawRenderNode called on a context with no surface!");
+-    return mEglManager.beginFrame(mEglSurface);
++    if (mPreRotationEnabled && mNativeWindow) {
++        // Before beginFrame(): the buffer is dequeued there with the new size.
++        updatePreRotation();
++    }
++    Frame frame = mEglManager.beginFrame(mEglSurface);
++    if (mPreRotation != 0 || mPreRotationChanged) {
++        frame.setPreRotation(mPreRotation, mPreRotationChanged);
++        mPreRotationChanged = false;
++    }
++    updatePixelSnapMatrix(frame.width(), frame.height(), frame.transform());
++    return frame;
+ }
+ 
+ IRenderPipeline::DrawResult SkiaOpenGLPipeline::draw(
+@@ -141,7 +264,8 @@ IRenderPipeline::DrawResult SkiaOpenGLPipeline::draw(
+         LOG_ALWAYS_FATAL("Unsupported color type.");
+     }
+ 
+-    auto backendRT = GrBackendRenderTargets::MakeGL(frame.width(), frame.height(), 0,
++    // The render target is the buffer, which is rotated with pre-rotation.
++    auto backendRT = GrBackendRenderTargets::MakeGL(frame.bufferWidth(), frame.bufferHeight(), 0,
+                                                     STENCIL_BUFFER_SIZE, fboInfo);
+ 
+     SkSurfaceProps props(mColorMode == ColorMode::Default ? 0 : SkSurfaceProps::kAlwaysDither_Flag,
+@@ -157,7 +281,7 @@ IRenderPipeline::DrawResult SkiaOpenGLPipeline::draw(
+         surface = SkSurfaces::WrapBackendRenderTarget(mRenderThread.getGrContext(), backendRT,
+                                                       getSurfaceOrigin(), colorType,
+                                                       mSurfaceColorSpace, &props);
+-        preTransform = SkMatrix::I();
++        preTransform = frame.preTransform();
+     }
+ 
+     SkPoint lightCenter = preTransform.mapXY(lightGeometry.center.x, lightGeometry.center.y);
+@@ -173,6 +297,8 @@ IRenderPipeline::DrawResult SkiaOpenGLPipeline::draw(
+                     ProfileType::None != Properties::getProfileType())) {
+         std::scoped_lock lock(profilerLock);
+         SkCanvas* profileCanvas = surface->getCanvas();
++        SkAutoCanvasRestore saver(profileCanvas, true);
++        profileCanvas->concat(preTransform);
+         SkiaProfileRenderer profileRenderer(profileCanvas, frame.width(), frame.height());
+         profiler->draw(profileRenderer);
+     }
+@@ -234,6 +360,8 @@ void SkiaOpenGLPipeline::onStop() {
+ bool SkiaOpenGLPipeline::setSurface(ANativeWindow* surface, SwapBehavior swapBehavior) {
+     mNativeWindow = surface;
+     mSwapBehavior = swapBehavior;
++    // A new (or recreated) surface starts unrotated; getFrame() picks up the hint.
++    resetPreRotation();
+ 
+     if (mEglSurface != EGL_NO_SURFACE) {
+         mEglManager.destroySurface(mEglSurface);
+diff --git a/libs/hwui/platform/android/pipeline/skia/SkiaOpenGLPipeline.h b/libs/hwui/platform/android/pipeline/skia/SkiaOpenGLPipeline.h
+index 6e7478288777..d02fd7897bc8 100644
+--- a/libs/hwui/platform/android/pipeline/skia/SkiaOpenGLPipeline.h
++++ b/libs/hwui/platform/android/pipeline/skia/SkiaOpenGLPipeline.h
+@@ -57,10 +57,8 @@ public:
+ 
+     const SkM44& getPixelSnapMatrix() const override {
+         // Small (~1/16th) nudge to ensure that pixel-aligned non-AA'd draws fill the
+-        // desired fragment
+-        static const SkScalar kOffset = 0.063f;
+-        static const SkM44 sSnapMatrix = SkM44::Translate(kOffset, kOffset);
+-        return sSnapMatrix;
++        // desired fragment. With pre-rotation the nudge is applied in buffer space.
++        return mPixelSnapMatrix;
+     }
+ 
+     static void invokeFunctor(const renderthread::RenderThread& thread, Functor* functor);
+@@ -69,10 +67,29 @@ protected:
+     void onContextDestroyed() override;
+ 
+ private:
++    // GL pre-rotation (debug.hwui.gl_prerotation). Follows the window's
++    // transform hint like VulkanSurface does: buffers are allocated in the
++    // display's orientation and drawn through a pre-rotation matrix, so the
++    // composer can scan them out without rotating them.
++    void resetPreRotation();
++    void updatePreRotation();
++    void recreateEglSurface();
++    void updatePixelSnapMatrix(int32_t width, int32_t height, int32_t transform);
++
+     renderthread::EglManager& mEglManager;
+     EGLSurface mEglSurface = EGL_NO_SURFACE;
+     sp<ANativeWindow> mNativeWindow;
+     renderthread::SwapBehavior mSwapBehavior = renderthread::SwapBehavior::kSwap_discardBuffer;
++
++    bool mPreRotationEnabled = false;
++    int32_t mPreRotation = 0;
++    bool mPreRotationChanged = false;
++    int32_t mPreRotationBufferWidth = 0;
++    int32_t mPreRotationBufferHeight = 0;
++    SkM44 mPixelSnapMatrix;
++    int32_t mSnapWidth = -1;
++    int32_t mSnapHeight = -1;
++    int32_t mSnapTransform = -1;
+ };
+ 
+ } /* namespace skiapipeline */
+diff --git a/libs/hwui/renderthread/CanvasContext.cpp b/libs/hwui/renderthread/CanvasContext.cpp
+index b24c2cc65b0e..e8cd6fbdc5f5 100644
+--- a/libs/hwui/renderthread/CanvasContext.cpp
++++ b/libs/hwui/renderthread/CanvasContext.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "CanvasContext.h"
+ 
++#include <android-base/properties.h>
+ #include <apex/window.h>
+ #include <fcntl.h>
+ 
+@@ -195,6 +196,13 @@ static void setBufferCount(ANativeWindow* window) {
+     // We only need to set min_undequeued + 2 because the renderahead amount was already factored into the
+     // query for min_undequeued
+     int bufferCount = min_undequeued_buffers + 2;
++    // With GL pre-rotation the composer can scan app buffers out directly. A
++    // buffer on a plane is only released after the next flip, so one more
++    // buffer keeps the next frame from waiting on that release fence.
++    static const bool sGlPreRotation = base::GetBoolProperty("debug.hwui.gl_prerotation", false);
++    if (sGlPreRotation) {
++        bufferCount += 1;
++    }
+     native_window_set_buffer_count(window, bufferCount);
+ }
+ 
+diff --git a/libs/hwui/renderthread/Frame.cpp b/libs/hwui/renderthread/Frame.cpp
+index 126bb093b4eb..a4f144474a8b 100644
+--- a/libs/hwui/renderthread/Frame.cpp
++++ b/libs/hwui/renderthread/Frame.cpp
+@@ -21,17 +21,61 @@ namespace android {
+ namespace uirenderer {
+ namespace renderthread {
+ 
++// NATIVE_WINDOW_TRANSFORM_ROT_* (HAL_TRANSFORM_ROT_*) values. Spelled out so this
++// file does not need system/window.h, which the host build does not have.
++static constexpr int32_t kTransformRot90 = 0x04;
++static constexpr int32_t kTransformRot180 = 0x03;
++static constexpr int32_t kTransformRot270 = 0x07;
++
++void Frame::setPreRotation(int32_t transform, bool invalidateContents) {
++    mTransform = transform;
++    if (invalidateContents) {
++        mBufferAge = 0;
++    }
++}
++
++int32_t Frame::bufferWidth() const {
++    return (mTransform & kTransformRot90) ? mHeight : mWidth;
++}
++
++int32_t Frame::bufferHeight() const {
++    return (mTransform & kTransformRot90) ? mWidth : mHeight;
++}
++
++// Same matrices as VulkanSurface's pre-rotation, for a window of width x height.
++SkMatrix Frame::preTransformMatrix(int32_t width, int32_t height, int32_t transform) {
++    switch (transform) {
++        case kTransformRot90:
++            return SkMatrix::MakeAll(0, -1, height, 1, 0, 0, 0, 0, 1);
++        case kTransformRot180:
++            return SkMatrix::MakeAll(-1, 0, width, 0, -1, height, 0, 0, 1);
++        case kTransformRot270:
++            return SkMatrix::MakeAll(0, 1, 0, -1, 0, width, 0, 0, 1);
++        default:
++            return SkMatrix::I();
++    }
++}
++
++SkMatrix Frame::preTransform() const {
++    return preTransformMatrix(mWidth, mHeight, mTransform);
++}
++
+ void Frame::map(const SkRect& in, int32_t* out) const {
+     /* The rectangles are specified relative to the bottom-left of the surface
+      * and the x and y components of each rectangle specify the bottom-left
+      * position of that rectangle.
+      *
+      * HWUI does everything with 0,0 being top-left, so need to map
+-     * the rect
++     * the rect. With pre-rotation the surface is the rotated buffer, so the
++     * rect is first moved from window into buffer coordinates.
+      */
++    SkRect rect = in;
++    if (mTransform != 0) {
++        rect = preTransform().mapRect(in);
++    }
+     SkIRect idirty;
+-    in.roundOut(&idirty);
+-    int32_t y = mHeight - (idirty.y() + idirty.height());
++    rect.roundOut(&idirty);
++    int32_t y = bufferHeight() - (idirty.y() + idirty.height());
+     // layout: {x, y, width, height}
+     out[0] = idirty.x();
+     out[1] = y;
+diff --git a/libs/hwui/renderthread/Frame.h b/libs/hwui/renderthread/Frame.h
+index d266faa4f7c9..9e5359530ed5 100644
+--- a/libs/hwui/renderthread/Frame.h
++++ b/libs/hwui/renderthread/Frame.h
+@@ -16,6 +16,7 @@
+ 
+ #pragma once
+ 
++#include <SkMatrix.h>
+ #include <stdint.h>
+ 
+ struct SkRect;
+@@ -37,6 +38,20 @@ public:
+     // for what this means
+     int32_t bufferAge() const { return mBufferAge; }
+ 
++    // GL pre-rotation. The buffer is rotated by transform() (a
++    // NATIVE_WINDOW_TRANSFORM_* value from the window's transform hint)
++    // relative to the window. width()/height() stay in window coordinates;
++    // bufferWidth()/bufferHeight() are the dimensions of the rotated buffer.
++    // invalidateContents forces a full redraw (bufferAge() 0) because the old
++    // buffer contents are in a different orientation.
++    void setPreRotation(int32_t transform, bool invalidateContents);
++    int32_t transform() const { return mTransform; }
++    int32_t bufferWidth() const;
++    int32_t bufferHeight() const;
++    // Window to buffer coordinates for transform(); identity without pre-rotation.
++    SkMatrix preTransform() const;
++    static SkMatrix preTransformMatrix(int32_t width, int32_t height, int32_t transform);
++
+ private:
+     Frame() {}
+     friend class EglManager;
+@@ -44,6 +59,7 @@ private:
+     int32_t mWidth;
+     int32_t mHeight;
+     int32_t mBufferAge;
++    int32_t mTransform = 0;
+ 
+     EGLSurface mSurface;
+ 

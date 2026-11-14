@@ -1,0 +1,47 @@
+diff --git a/drivers/gpu/drm/panfrost/panfrost_devfreq.c b/drivers/gpu/drm/panfrost/panfrost_devfreq.c
+--- a/drivers/gpu/drm/panfrost/panfrost_devfreq.c	2026-11-14 09:48:30.664347204 -0500
++++ b/drivers/gpu/drm/panfrost/panfrost_devfreq.c	2026-11-14 09:48:30.664382625 -0500
+@@ -4,6 +4,8 @@
+ #include <linux/clk.h>
+ #include <linux/devfreq.h>
+ #include <linux/devfreq_cooling.h>
++#include <linux/math64.h>
++#include <linux/moduleparam.h>
+ #include <linux/nvmem-consumer.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_opp.h>
+@@ -11,6 +13,19 @@
+ #include "panfrost_device.h"
+ #include "panfrost_devfreq.h"
+ 
++/*
++ * simple_ondemand jumps to the top OPP only while busy time is above 45%
++ * of the polling window. A frame runs the CPU, this GPU, then the
++ * compositor one after another, so a scroll stays under that line and the
++ * clock falls back to 200 MHz. 200 matches msm-adreno-tz mod_percent:
++ * twice the busy time while scrolling, and still 0 when nothing is queued.
++ * 100 reports the measured busy time.
++ */
++static unsigned int busy_scale = 200;
++module_param(busy_scale, uint, 0644);
++MODULE_PARM_DESC(busy_scale,
++		 "Percent of GPU busy time reported to devfreq (100 = measured)");
++
+ static void panfrost_devfreq_update_utilization(struct panfrost_devfreq *pfdevfreq)
+ {
+ 	ktime_t now, last;
+@@ -64,6 +79,14 @@
+ 
+ 	status->busy_time = ktime_to_ns(pfdevfreq->busy_time);
+ 
++	if (status->total_time > 0 && busy_scale != 100) {
++		u64 scaled = div_u64((u64)status->busy_time * busy_scale, 100);
++
++		if (scaled > status->total_time)
++			scaled = status->total_time;
++		status->busy_time = scaled;
++	}
++
+ 	panfrost_devfreq_reset(pfdevfreq);
+ 
+ 	spin_unlock_irqrestore(&pfdevfreq->lock, irqflags);

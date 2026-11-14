@@ -1,0 +1,45 @@
+diff --git a/cros_gralloc/cros_gralloc_driver.cc b/cros_gralloc/cros_gralloc_driver.cc
+--- a/cros_gralloc/cros_gralloc_driver.cc
++++ b/cros_gralloc/cros_gralloc_driver.cc
+@@ -7,6 +7,7 @@
+ #include "cros_gralloc_driver.h"
+ 
+ #include <cstdlib>
++#include <cstring>
+ #include <cutils/properties.h>
+ #include <fcntl.h>
+ #include <hardware/gralloc.h>
+@@ -284,5 +285,14 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descriptor *descriptor,
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * The framebuffer usage is HW_FB plus HW_TEXTURE. Clear TEXTURE so
++	 * the rockchip backend can AFBC that buffer only. Windows have no
++	 * HW_FB and stay linear. Other drivers keep the resolved flags.
++	 */
++	if (!strcmp(drv_get_name(drv_.get()), "rockchip") &&
++	    (descriptor->droid_usage & GRALLOC_USAGE_HW_FB))
++		resolved_use_flags &= ~BO_USE_TEXTURE;
++
+ 	bo = drv_bo_create(drv_.get(), descriptor->width, descriptor->height, resolved_format,
+ 			   resolved_use_flags);
+diff --git a/dumb_driver.c b/dumb_driver.c
+--- a/dumb_driver.c
++++ b/dumb_driver.c
+@@ -111,6 +111,13 @@ static bool rockchip_afbc_ok(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
+ 	if (use_flags & blocked)
+ 		return false;
+-	if (!(use_flags & (BO_USE_RENDERING | BO_USE_SCANOUT)))
+-		return false;
++	/*
++	 * One AFBC plane per frame. Windows carry BO_USE_TEXTURE and stay
++	 * linear. The framebuffer is allocated with HW_FB; gralloc clears
++	 * the TEXTURE bit HW_COMPOSER adds, so this buffer is the AFBC one.
++	 */
++	if (use_flags & BO_USE_TEXTURE)
++		return false;
++	if (!(use_flags & BO_USE_RENDERING) || !(use_flags & BO_USE_SCANOUT))
++		return false;
+ 	/* Unaligned sizes would change the reported pixel stride. */
+ 	if (!IS_ALIGNED(width, 16) || !IS_ALIGNED(height, 16))

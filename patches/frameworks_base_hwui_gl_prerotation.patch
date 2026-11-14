@@ -237,16 +237,19 @@ index b24c2cc65b0e..e8cd6fbdc5f5 100644
  #include <apex/window.h>
  #include <fcntl.h>
  
-@@ -195,6 +196,13 @@ static void setBufferCount(ANativeWindow* window) {
+@@ -195,6 +196,16 @@ static void setBufferCount(ANativeWindow* window) {
      // We only need to set min_undequeued + 2 because the renderahead amount was already factored into the
      // query for min_undequeued
      int bufferCount = min_undequeued_buffers + 2;
-+    // With GL pre-rotation the composer can scan app buffers out directly. A
-+    // buffer on a plane is only released after the next flip, so one more
-+    // buffer keeps the next frame from waiting on that release fence.
++    // GL pre-rotation lets the composer scan a buffer on a plane, and that
++    // buffer stays acquired until the next flip. The launcher is still
++    // client-composited, so SurfaceFlinger also holds a buffer until the
++    // composed frame is presented. One extra slot still left dequeueBuffer
++    // waiting out that present, 12 to 20 ms on an app-drawer swipe. Two
++    // extra slots cover the plane and that present.
 +    static const bool sGlPreRotation = base::GetBoolProperty("debug.hwui.gl_prerotation", false);
 +    if (sGlPreRotation) {
-+        bufferCount += 1;
++        bufferCount += 2;
 +    }
      native_window_set_buffer_count(window, bufferCount);
  }

@@ -256,4 +256,12 @@ cgroup 迁移修好之前，后台绑小核的提示不会生效。
 11. 关掉压缩 APEX。跟某次本来就要重做 userdata 或打包分发镜像一起做。看第一次开机时间和 `super` 大小。
 12. `boot-after-ota=speed-profile`。有 OTA 之后再测。属性可以夹进别的 `super`，不单独写卡。
 
-显示这条线量到这里。壁纸的 `ROT_270` 进了 GPU，状态栏和任务栏在画面更新时是平面，帧缓冲是唯一的 AFBC。桌面夹在壁纸和这两条栏中间，客户范围按 z 序连在一起，大 VOP 又只有三个非 cursor 窗口，所以桌面留在 GPU 里。空闲一秒后 `FlatteningController` 仍会把整帧收成一块帧缓冲。壁纸缩放去不掉 `ROT_270`。Rockchip 闭源合成器那条 RGA 旋转路径不接进这棵主线 `drm_hwcomposer`。
+显示这条线量到这里。壁纸的 `ROT_90` 仍进 GPU，状态栏和任务栏在画面更新时是平面，帧缓冲是唯一的 AFBC。桌面夹在壁纸和这两条栏中间，客户范围按 z 序连在一起，大 VOP 又只有三个非 cursor 窗口，所以桌面留在 GPU 里。空闲一秒后 `FlatteningController` 仍会把整帧收成一块帧缓冲。壁纸缩放去不掉这个旋转。Rockchip 闭源合成器那条 RGA 旋转路径不接进这棵主线 `drm_hwcomposer`。
+
+2026-11-14 10:28，同一台、壁纸缩放已经是 1.0。应用抽屉划出时用 `atrace gfx` 按线程对过。启动器 UI 线程的 `traversal` 中位数 19 ms，`measure` 和 `layout` 都不到 0.2 ms，`Record View#draw()` 中位数 0.4 ms。真正占时间的是 UI 线程等 RenderThread 的 `postAndWait`（中位数 7 ms），以及 RenderThread 画整块 2048×1536 桌面缓冲（中位数 9 ms）。12 帧里 RenderThread 还在 `waitForBufferRelease` 上等了中位数 10 ms。SurfaceFlinger 的 `drawLayersInternal` 中位数 1.7 ms，`present` 中位数 4 ms。合成器后台的 `AsyncWaitForBuffersSwap` 中位数 14 ms，不在这次 `present` 的调用栈里。抽屉划出时桌面帧开始间隔中位数 22 ms，上屏的 `present` 间隔中位数 33 ms。第 5 项往后的 `tun`、cgroup、`powerhint` 不动这条路径。
+
+同一条轨迹里，慢的一帧 `dequeueBuffer` 停在 `waitForBufferRelease`，12 到 20 ms，上一帧 `present` 结束才返回。那一帧真正画 2048×1536 大约 4 ms。预旋转原来多留 1 块缓冲，盖不住平面上的一块，再加合成后要等到上屏的一块。`CanvasContext::setBufferCount` 在 `debug.hwui.gl_prerotation` 打开时改成多留 2 块。每个 HWUI 窗口多一块缓冲，桌面这一块大约 12 MB。`super.img` 1,285,599,636 字节，SHA-256 `9c5e35128bb90a29ba8f7535340afa01ba73c37f62a32b2422319220e0fd40c5`。已写入卡。
+
+2026-11-14 10:58，`10.0.0.110`，`ro.build.date` 是 Sat Nov 14 10:43:03 EST 2026，屏幕是 `ROTATION_0`。手指拖着应用抽屉走的 786 ms 里，`doFrame` 和 `present` 间隔中位数都是 16.7 ms，90 分位 17.0 ms。这段 `waitForBufferRelease` 没有出现。`LauncherAllAppsContainerView` 的层只画了 1 次，整块 1536×2048 的 `Drawing` 中位数 3.9 ms。手指松开、抽屉自己弹开的大约 300 ms 里，这一层又画了 13 次，`Drawing` 中位数 11 ms，`present` 90 分位 33.6 ms。弹回的短滑也有 10 次重画这一层，`present` 90 分位 33 ms。一直滑到底再松开、让它收回去，`present` 仍是 16.7 ms。松手弹开时 `onDragEnd` 对 `ALL_APPS` 调用 `addSpringFromFlingUpdateListener`，里面 `absorbSwipeUpVelocity` 让 `EdgeEffect` 吸收速度并 `invalidate()` 整块 `SpringRelativeLayout`。拖动过程只改位移，不走这一段。
+
+2026-11-14。`packages/apps/Launcher3/src/com/android/launcher3/views/SpringRelativeLayout.java` 里，`absorbSwipeUpVelocity`、`absorbPullDeltaDistance` 和 `onRelease` 改为结束已经在画的光效，不再 `onAbsorb` / `onPull`。抽屉的位移动画不动。补丁是 `patches/packages_apps_Launcher3_all_apps_edge_glow.patch`。`super.img` 1,285,599,636 字节，SHA-256 `a55e94a01047228f897068ba1c9a2bdaf30c37ac806b24e0350ddbd18f4a1511`，`ro.build.date` 是 Sat Nov 14 11:07:20 EST 2026。2026-11-14 11:15 已传到 `10.0.0.123:/home/user/phase3/super.img`，上一张留成 `super.img.9c5e3512`。`kernel.kpart` 仍是 11 月 5 日那份。`doas -n` 要密码，写卡没跑。弹回那条路径这次没有单独改，写入后再量。

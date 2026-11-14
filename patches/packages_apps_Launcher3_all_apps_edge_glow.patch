@@ -1,0 +1,49 @@
+diff --git a/src/com/android/launcher3/views/SpringRelativeLayout.java b/src/com/android/launcher3/views/SpringRelativeLayout.java
+index a13152e..c035be1 100644
+--- a/src/com/android/launcher3/views/SpringRelativeLayout.java
++++ b/src/com/android/launcher3/views/SpringRelativeLayout.java
+@@ -76,21 +76,39 @@ public class SpringRelativeLayout extends RelativeLayout {
+     }
+ 
+ 
++    /**
++     * The glow is drawn by this view. Invalidating it repaints the whole
++     * all-apps layer, and EdgeEffect keeps posting another frame until the
++     * glow finishes. On a full-screen container that drops the settle
++     * animation off 60 fps. The drawer still moves with the state animation.
++     */
++    private void endEdgeGlow() {
++        if (mEdgeGlowBottom.isFinished()) {
++            return;
++        }
++        mEdgeGlowBottom.finish();
++        invalidate();
++    }
++
+     /**
+      * Absorbs the velocity as a result for swipe-up fling
+      */
+     protected void absorbSwipeUpVelocity(int velocity) {
+-        mEdgeGlowBottom.onAbsorb(velocity);
+-        invalidate();
++        if (velocity == 0 && mEdgeGlowBottom.isFinished()) {
++            return;
++        }
++        endEdgeGlow();
+     }
+ 
+     protected void absorbPullDeltaDistance(float deltaDistance, float displacement) {
+-        mEdgeGlowBottom.onPull(deltaDistance, displacement);
+-        invalidate();
++        if (deltaDistance == 0f && displacement == 0f && mEdgeGlowBottom.isFinished()) {
++            return;
++        }
++        endEdgeGlow();
+     }
+ 
+     public void onRelease() {
+-        mEdgeGlowBottom.onRelease();
++        endEdgeGlow();
+     }
+ 
+     public EdgeEffectFactory createEdgeEffectFactory() {

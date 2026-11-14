@@ -106,6 +106,7 @@ LINEAGE_PATCH_MAP=(
     "hardware/interfaces:hardware_interfaces_audio_analog_jack_mixer.patch"
     "hardware/interfaces:hardware_interfaces_audio_builtin_mic_gain.patch"
     "hardware/interfaces:hardware_interfaces_audio_hdmi_keepalive.patch"
+    "packages/apps/Launcher3:packages_apps_Launcher3_all_apps_edge_glow.patch"
     "packages/apps/Settings:packages_apps_Settings_hearing_aid_null_check.patch"
     "packages/modules/Connectivity:packages_modules_Connectivity_netlink_monitor_einval.patch"
     "packages/modules/NetworkStack:packages_modules_NetworkStack_restart_netlink_monitor.patch"

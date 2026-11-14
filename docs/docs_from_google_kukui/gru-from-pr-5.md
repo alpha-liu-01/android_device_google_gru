@@ -288,6 +288,8 @@ cgroup 迁移修好之前，后台绑小核的提示不会生效。
 
 2026-11-14 下一批是内核分区：第 6 项的 cgroup，和第 9 项的 `coreboot_table` / VPD。`vmlinuz.kpart` SHA-256 `55cb9c5309157a0b0ed12412f08000a8751842b2002e0a31b999d713a3c64668`。已写入。cgroup 迁移和 VPD 见上面的事件。第 7 项的 `powerhint` 和 `gru-ids.sh` 在随后的 `super`：1,285,489,044 字节，SHA-256 `dfe965c36f1cd8f90317303f51ac40dd694effcba463be03d2ae1a9da9baaa1e`，`ro.build.date` 是 Sat Nov 14 14:31:17 EST 2026。内核分区没有换。已写入。频率、后台 cpuset 和 `ro.serialno` 见上面两节的事件。
 
+2026-11-14 15:00 的分发包是 `lineage-23.2-gru-20261114-2.zip`，1,059,710,397 字节，SHA-256 `076351246a53871f79dcbf055a14f82398a9b699261b1547aa86a2ad932b1998`。原始镜像 11,274,289,152 字节。包里的 `super` 就是上面这份。内核分区重新签名后是 `f04dd6e42ca700170effd69a339f15f07a4be0d471c231b4be7a43251834f542`（14,090,240 字节）。内核 Image 仍是 `0c89417d14fe44582a644148dfed962b8e4c11da0186f0b1e8590f1bc836d7e2`，命令行仍是 `loglevel=4` 和 `androidboot.selinux=enforcing`。上午的 `lineage-23.2-gru-20261114.zip`（`57cd0e93`）还在，那一份对应 09:04 的 super。第 11、12 项留到有 OTA 和 recovery 之后。
+
 显示这条线量到这里。壁纸的 `ROT_90` 仍进 GPU，状态栏和任务栏在画面更新时是平面，帧缓冲是唯一的 AFBC。桌面夹在壁纸和这两条栏中间，客户范围按 z 序连在一起，大 VOP 又只有三个非 cursor 窗口，所以桌面留在 GPU 里。空闲一秒后 `FlatteningController` 仍会把整帧收成一块帧缓冲。壁纸缩放去不掉这个旋转。Rockchip 闭源合成器那条 RGA 旋转路径不接进这棵主线 `drm_hwcomposer`。
 
 2026-11-14 10:28，同一台、壁纸缩放已经是 1.0。应用抽屉划出时用 `atrace gfx` 按线程对过。启动器 UI 线程的 `traversal` 中位数 19 ms，`measure` 和 `layout` 都不到 0.2 ms，`Record View#draw()` 中位数 0.4 ms。真正占时间的是 UI 线程等 RenderThread 的 `postAndWait`（中位数 7 ms），以及 RenderThread 画整块 2048×1536 桌面缓冲（中位数 9 ms）。12 帧里 RenderThread 还在 `waitForBufferRelease` 上等了中位数 10 ms。SurfaceFlinger 的 `drawLayersInternal` 中位数 1.7 ms，`present` 中位数 4 ms。合成器后台的 `AsyncWaitForBuffersSwap` 中位数 14 ms，不在这次 `present` 的调用栈里。抽屉划出时桌面帧开始间隔中位数 22 ms，上屏的 `present` 间隔中位数 33 ms。第 5 项往后的 `tun`、cgroup、`powerhint` 不动这条路径。
